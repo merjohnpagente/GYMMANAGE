@@ -1,0 +1,1057 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FitCore GMS — Gym Management System</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%237285ff'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='central' text-anchor='middle' font-family='Arial Black,sans-serif' font-weight='900' font-size='20' fill='white'%3EF%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@100;300;400;500;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ============================================================ PORTFOLIO-STYLE FX ============================================================ -->
+<div class="progress-bar" id="progressBar"><span id="progressFill"></span></div>
+<div class="cursor-glow" id="cursorGlow" aria-hidden="true"></div>
+<div class="bg-fx" aria-hidden="true">
+  <i class="blob blob-1"></i>
+  <i class="blob blob-2"></i>
+  <i class="blob blob-3"></i>
+</div>
+
+<!-- ============================================================ LOGIN PAGE ============================================================ -->
+<div id="loginPage">
+
+  <!-- LANDING NAVBAR -->
+  <nav class="landing-nav" id="landingNav">
+    <div class="ln-brand">FIT<span>CORE</span></div>
+    <ul class="ln-links">
+      <li><a href="#" class="ln-link active" onclick="showLandingSection('home',this);return false">Home</a></li>
+      <li><a href="#" class="ln-link" onclick="showLandingSection('features',this);return false">Features</a></li>
+      <li><a href="#" class="ln-link" onclick="showLandingSection('explore',this);return false">Plans</a></li>
+      <li><a href="#" class="ln-link" onclick="showLandingSection('trainers',this);return false">Trainers</a></li>
+      <li><a href="#" class="ln-link" onclick="showLandingSection('reviews',this);return false">Reviews</a></li>
+      <li><a href="#" class="ln-link ln-cta" onclick="showLandingSection('register',this);return false">Log In</a></li>
+    </ul>
+    <button class="ln-hamburger" id="lnHamburger" onclick="toggleMobileMenu()" aria-label="Toggle menu"><span></span><span></span><span></span></button>
+  </nav>
+  <!-- Mobile dropdown menu -->
+  <div class="ln-mobile-menu" id="lnMobileMenu">
+    <a href="#" class="ln-link" onclick="showLandingSection('home',null);closeMobileMenu();return false">Home</a>
+    <a href="#" class="ln-link" onclick="showLandingSection('features',null);closeMobileMenu();return false">Features</a>
+    <a href="#" class="ln-link" onclick="showLandingSection('explore',null);closeMobileMenu();return false">Plans</a>
+    <a href="#" class="ln-link" onclick="showLandingSection('trainers',null);closeMobileMenu();return false">Trainers</a>
+    <a href="#" class="ln-link" onclick="showLandingSection('reviews',null);closeMobileMenu();return false">Reviews</a>
+    <a href="#" class="ln-link ln-cta" onclick="showLandingSection('register',null);closeMobileMenu();return false">Log In</a>
+  </div>
+
+  <!-- HOME SECTION -->
+  <div id="landingHome" class="landing-section">
+    <div class="hero-content">
+      <div class="hero-chip reveal"><span class="hero-chip-dot"></span>Web-Based Gym Management</div>
+      <h1 class="hero-title reveal reveal-d1">Manage Your<br><span>Gym</span> with<br>FITCORE</h1>
+      <p class="hero-sub reveal reveal-d2">A complete gym management system built for local fitness centers — members, billing, trainer schedules, walk-ins, and reports all in one place.</p>
+      <div class="hero-btns reveal reveal-d3">
+        <button class="btn-primary hero-btn hero-btn-orange" onclick="showLandingSection('register',document.querySelector('.ln-cta'))">Get Started Now</button>
+        <button class="btn-secondary hero-btn hero-btn-outline" onclick="showLandingSection('explore',document.querySelectorAll('.ln-link')[2])">Explore Plans</button>
+      </div>
+      <div class="hero-stats reveal reveal-d4">
+        <div class="hs-item"><span class="hs-num" id="heroMemberCount">—</span><span class="hs-label">Members</span></div>
+        <div class="hs-div"></div>
+        <div class="hs-item"><span class="hs-num" data-count="6">6</span><span class="hs-label">Modules</span></div>
+        <div class="hs-div"></div>
+        <div class="hs-item"><span class="hs-num" data-count="3">3</span><span class="hs-label">User Roles</span></div>
+      </div>
+      <div class="scroll-cue reveal reveal-d5"><span class="scroll-cue-line"></span>Scroll</div>
+    </div>
+    <div class="hero-visual reveal reveal-d2">
+      <img src="assets/pngegg.png" alt="FITCORE preview" class="hero-img">
+      <div class="hero-frame" aria-hidden="true"><i class="hf-c hf-tl"></i><i class="hf-c hf-tr"></i><i class="hf-c hf-bl"></i><i class="hf-c hf-br"></i></div>
+      <span class="hero-plus hp-1" aria-hidden="true">+</span>
+      <span class="hero-plus hp-2" aria-hidden="true">+</span>
+      <span class="hero-plus hp-3" aria-hidden="true">+</span>
+    </div>
+  </div>
+
+  <!-- MARQUEE TICKER -->
+  <div class="marquee" aria-hidden="true">
+    <div class="marquee-track">
+      <div class="marquee-group">Train Hard <i>&#10022;</i> No Excuses <i>&#10022;</i> Stay Strong <i>&#10022;</i> Lift Big <i>&#10022;</i> Push Your Limits <i>&#10022;</i> Show Up Daily <i>&#10022;</i> Win The Day</div>
+      <div class="marquee-group">Train Hard <i>&#10022;</i> No Excuses <i>&#10022;</i> Stay Strong <i>&#10022;</i> Lift Big <i>&#10022;</i> Push Your Limits <i>&#10022;</i> Show Up Daily <i>&#10022;</i> Win The Day</div>
+    </div>
+  </div>
+
+  <!-- FEATURES SECTION -->
+  <div id="landingFeatures" class="landing-section" style="display:none">
+    <div class="inner-page">
+      <div class="section-head">
+        <span class="section-eyebrow reveal">01</span>
+        <div class="section-head-main reveal reveal-d1"><h2 class="inner-title">Our <span>Features</span></h2>
+        <p class="inner-sub">Everything you need to manage your fitness journey in one place.</p></div>
+      </div>
+      <div class="features-grid">
+        <div class="feature-card reveal"><div class="fc-icon">&#128202;</div><h3>Smart Dashboard</h3><p>Track attendance, payments, and member stats at a glance with real-time analytics.</p></div>
+        <div class="feature-card reveal reveal-d1"><div class="fc-icon">&#128101;</div><h3>Member Management</h3><p>Register new members, update profiles, monitor membership status, and manage records from one centralized module.</p></div>
+        <div class="feature-card reveal reveal-d2"><div class="fc-icon">&#128179;</div><h3>Billing &amp; Payments</h3><p>Record membership payments, auto-calculate expiry dates, edit transactions, and generate digital receipts with full audit history.</p></div>
+        <div class="feature-card reveal"><div class="fc-icon">&#128197;</div><h3>Trainer Scheduling</h3><p>Trainers manage their own sessions with automatic conflict detection — no double bookings, no scheduling errors.</p></div>
+        <div class="feature-card reveal reveal-d1"><div class="fc-icon">&#128276;</div><h3>Renewal Reminders</h3><p>The system automatically flags memberships expiring within 3 days so staff can follow up before a member lapses.</p></div>
+        <div class="feature-card reveal reveal-d2"><div class="fc-icon">&#128200;</div><h3>Reports &amp; Insights</h3><p>Generate daily attendance logs, monthly revenue summaries including walk-in income, and export reports to CSV instantly.</p></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- EXPLORE SECTION -->
+  <div id="landingExplore" class="landing-section" style="display:none">
+    <div class="inner-page">
+      <div class="section-head">
+        <span class="section-eyebrow reveal">02</span>
+        <div class="section-head-main reveal reveal-d1"><h2 class="inner-title">Explore <span>Plans</span></h2>
+        <p class="inner-sub">Flexible membership options designed to fit every goal and budget.</p></div>
+      </div>
+      <div class="explore-cards" id="exploreCardsContainer"></div>
+    </div>
+  </div>
+
+  <!-- EXPLORE EXTRA SECTIONS -->
+  <div id="landingExploreExtra" style="display:none;background:var(--navy-900);padding-top:0">
+    <div class="explore-extra">
+
+      <!-- Plan Comparison -->
+      <hr class="explore-divider">
+      <div class="explore-section">
+        <div class="explore-section-title">Plan <span>Comparison</span></div>
+        <p class="explore-section-sub">Not sure which plan fits you? Here's a side-by-side breakdown of everything included.</p>
+        <div style="overflow-x:auto">
+          <table class="plan-compare-table">
+            <thead>
+              <tr>
+                <th>Feature</th>
+                <th>Basic<br><span style="color:var(--orange);font-size:12px">&#8369;500/mo</span></th>
+                <th class="th-featured">Standard<br><span style="font-size:12px">&#8369;900/mo</span></th>
+                <th>Premium<br><span style="color:var(--orange);font-size:12px">&#8369;1,500/3mo</span></th>
+                <th style="color:var(--gold)">Walk-In<br><span style="font-size:12px">&#8369;100/day</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>Gym Access</td><td><span class="cmp-check">&#10003;</span></td><td><span class="cmp-check">&#10003;</span></td><td><span class="cmp-check">&#10003;</span></td><td><span class="cmp-check">&#10003;</span></td></tr>
+              <tr><td>Locker Use</td><td><span class="cmp-check">&#10003;</span></td><td><span class="cmp-check">&#10003;</span></td><td><span class="cmp-check">&#10003;</span></td><td><span class="cmp-x">&#10005;</span></td></tr>
+              <tr><td>Sessions / Month</td><td><span class="cmp-val">8</span></td><td><span class="cmp-val">16</span></td><td><span class="cmp-val">Unlimited</span></td><td><span class="cmp-val">1 day</span></td></tr>
+              <tr><td>Trainer Session</td><td><span class="cmp-x">&#10005;</span></td><td><span class="cmp-check">&#10003;</span></td><td><span class="cmp-check">&#10003;</span></td><td><span class="cmp-x">&#10005;</span></td></tr>
+              <tr><td>Priority Trainer</td><td><span class="cmp-x">&#10005;</span></td><td><span class="cmp-x">&#10005;</span></td><td><span class="cmp-check">&#10003;</span></td><td><span class="cmp-x">&#10005;</span></td></tr>
+              <tr><td>Free Assessment</td><td><span class="cmp-x">&#10005;</span></td><td><span class="cmp-x">&#10005;</span></td><td><span class="cmp-check">&#10003;</span></td><td><span class="cmp-x">&#10005;</span></td></tr>
+              <tr><td>No Registration Required</td><td><span class="cmp-x">&#10005;</span></td><td><span class="cmp-x">&#10005;</span></td><td><span class="cmp-x">&#10005;</span></td><td><span class="cmp-check">&#10003;</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- How It Works -->
+      <hr class="explore-divider">
+      <div class="explore-section">
+        <div class="explore-section-title">How It <span>Works</span></div>
+        <p class="explore-section-sub">Joining FitCore is simple. Here's how to get started from visit to first session.</p>
+        <div class="how-steps">
+          <div class="how-step">
+            <div class="how-step-num">01</div>
+            <h4>Visit the Gym</h4>
+            <p>Come in and talk to our staff. They'll walk you through the available plans — Basic, Standard, or Premium — and help you pick the right fit.</p>
+          </div>
+          <div class="how-step">
+            <div class="how-step-num">02</div>
+            <h4>Register &amp; Get Approved</h4>
+            <p>Create your account and submit your details. Our admin will review and approve your registration before your first session.</p>
+          </div>
+          <div class="how-step">
+            <div class="how-step-num">03</div>
+            <h4>Pay at the Front Desk</h4>
+            <p>Settle your membership fee in cash at the front desk. Our staff will record your payment and set your membership expiry right away.</p>
+          </div>
+          <div class="how-step">
+            <div class="how-step-num">04</div>
+            <h4>Start Training</h4>
+            <p>Check in with staff on every visit. Your trainer is ready, the equipment is set, and the gym is open and waiting for you.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Facilities -->
+      <hr class="explore-divider">
+      <div class="explore-section">
+        <div class="explore-section-title">What's <span>Inside</span></div>
+        <p class="explore-section-sub">From free weights to cardio, everything you need is here — maintained, well-spaced, and staffed daily.</p>
+        <div class="facilities-grid">
+          <div class="facility-card">
+            <div class="facility-icon">&#127947;</div>
+            <div class="facility-name">Free Weights</div>
+            <div class="facility-desc">Dumbbells, barbells, squat racks &amp; benches</div>
+          </div>
+          <div class="facility-card">
+            <div class="facility-icon">&#127939;</div>
+            <div class="facility-name">Cardio Zone</div>
+            <div class="facility-desc">Treadmills, bikes, rowing &amp; ellipticals</div>
+          </div>
+          <div class="facility-card">
+            <div class="facility-icon">&#128275;</div>
+            <div class="facility-name">Locker Rooms</div>
+            <div class="facility-desc">Secure lockers included on Basic and above</div>
+          </div>
+          <div class="facility-card">
+            <div class="facility-icon">&#127937;</div>
+            <div class="facility-name">Group Classes</div>
+            <div class="facility-desc">Zumba, HIIT &amp; stretching — weekly schedule</div>
+          </div>
+          <div class="facility-card">
+            <div class="facility-icon">&#128101;</div>
+            <div class="facility-name">Personal Training</div>
+            <div class="facility-desc">Certified trainers on Standard &amp; Premium</div>
+          </div>
+          <div class="facility-card">
+            <div class="facility-icon">&#128338;</div>
+            <div class="facility-name">Operating Hours</div>
+            <div class="facility-desc">Mon–Sat 5am–10pm &nbsp;·&nbsp; Sun 7am–6pm</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- FAQ -->
+      <hr class="explore-divider">
+      <div class="explore-section">
+        <div class="explore-section-title">Common <span>Questions</span></div>
+        <p class="explore-section-sub">Everything you need to know before signing up.</p>
+        <div class="faq-list">
+          <div class="faq-item">
+            <div class="faq-q">Can I upgrade my plan later?</div>
+            <div class="faq-a">Yes — you can upgrade anytime. Visit the front desk or contact staff. Remaining days on your current plan are prorated.</div>
+          </div>
+          <div class="faq-item">
+            <div class="faq-q">Do I need to book a trainer session in advance?</div>
+            <div class="faq-a">Walk-ins are always welcome for general use. For personal trainer sessions (included in Standard and above), booking ahead is recommended.</div>
+          </div>
+          <div class="faq-item">
+            <div class="faq-q">What payment methods do you accept?</div>
+            <div class="faq-a">GCash, Maya, and cash at the front desk. Digital receipts are issued for every transaction.</div>
+          </div>
+          <div class="faq-item">
+            <div class="faq-q">Is there a registration fee?</div>
+            <div class="faq-a">No registration fee for any plan. Walk-ins simply pay the ₱100 day rate at the front desk — no forms required.</div>
+          </div>
+          <div class="faq-item">
+            <div class="faq-q">What happens when my plan expires?</div>
+            <div class="faq-a">You'll receive a renewal notification before expiry. Staff can process your renewal quickly — just visit the front desk or call ahead.</div>
+          </div>
+        </div>
+      </div>
+
+
+
+    </div>
+  </div>
+
+  <!-- TRAINERS SECTION -->
+  <div id="landingTrainers" class="landing-section" style="display:none">
+    <div class="inner-page">
+      <div class="section-head">
+        <span class="section-eyebrow reveal">03</span>
+        <div class="section-head-main reveal reveal-d1"><h2 class="inner-title">Meet Our <span>Trainers</span></h2>
+        <p class="inner-sub">Certified coaches ready to push you past your limits.</p></div>
+      </div>
+      <div class="trainers-grid" id="trainersGrid"></div>
+    </div>
+  </div>
+
+  <!-- REVIEWS SECTION -->
+  <div id="landingReviews" class="landing-section" style="display:none">
+    <div class="inner-page">
+      <div class="section-head">
+        <span class="section-eyebrow reveal">04</span>
+        <div class="section-head-main reveal reveal-d1"><h2 class="inner-title">Member <span>Stories</span></h2>
+        <p class="inner-sub">Real results from real members at FitCore.</p></div>
+      </div>
+      <div class="reviews-grid">
+        <div class="review-card reveal">
+          <div class="rv-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+          <p class="rv-quote">"The front desk team tracks everything — renewals, sessions, even my trainer bookings. I never have to remind them about anything."</p>
+          <div class="rv-user"><div class="rv-avatar">SH</div><div><div class="rv-name">Stephen Hugo</div><div class="rv-plan">Standard Member</div></div></div>
+        </div>
+        <div class="review-card reveal reveal-d1">
+          <div class="rv-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+          <p class="rv-quote">"Clean equipment, fair price, and the 3-day renewal reminder actually works. I extended to a full year after my first month."</p>
+          <div class="rv-user"><div class="rv-avatar">MD</div><div><div class="rv-name">Mike Delavega</div><div class="rv-plan">Basic Member</div></div></div>
+        </div>
+        <div class="review-card reveal reveal-d2">
+          <div class="rv-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+          <p class="rv-quote">"The trainer scheduling system is brilliant. No double bookings, no waiting — my coach is always ready when I walk in."</p>
+          <div class="rv-user"><div class="rv-avatar">CA</div><div><div class="rv-name">Christan Aranez</div><div class="rv-plan">Premium Member</div></div></div>
+        </div>
+        <div class="review-card reveal">
+          <div class="rv-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+          <p class="rv-quote">"Walk-in friendly and zero registration headaches. Just pay at the desk and train. Exactly what I need on my busy weeks."</p>
+          <div class="rv-user"><div class="rv-avatar">SC</div><div><div class="rv-name">Sam Ervin Cuajor</div><div class="rv-plan">Walk-In Visitor</div></div></div>
+        </div>
+        <div class="review-card reveal reveal-d1">
+          <div class="rv-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+          <p class="rv-quote">"Digital receipts for every payment, and I can see my sessions at a glance. This is how every gym should be run."</p>
+          <div class="rv-user"><div class="rv-avatar">JN</div><div><div class="rv-name">Janwell Nacario</div><div class="rv-plan">Standard Member</div></div></div>
+        </div>
+        <div class="review-card reveal reveal-d2">
+          <div class="rv-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+          <p class="rv-quote">"I love that walk-ins are welcome too. My friends drop by without signing up and the staff handles everything smoothly."</p>
+          <div class="rv-user"><div class="rv-avatar">DR</div><div><div class="rv-name">Danica Reyes</div><div class="rv-plan">Premium Member</div></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- REGISTER/LOGIN SECTION -->
+  <div id="landingRegister" class="landing-section" style="display:none">
+    <div class="login-wrap">
+      <div class="login-card" id="loginCard">
+        <!-- LOGIN FORM -->
+        <div id="loginForm">
+          <div class="login-logo">
+            <h1>FIT<span>CORE</span></h1>
+            <p>Gym Management System</p>
+          </div>
+        <div id="loginError" class="error-msg"></div>
+        <div class="form-group">
+          <label>Username</label>
+          <input type="text" id="loginUser" placeholder="Enter username" autocomplete="username" onkeydown="if(event.key==='Enter')doLogin()">
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <div class="input-wrap">
+            <input type="password" id="loginPass" placeholder="Enter password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
+            <button type="button" class="pw-toggle" onclick="togglePw('loginPass',this)" aria-label="Toggle password visibility"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          </div>
+        </div>
+        <button class="btn-primary" onclick="doLogin()">Log In</button>
+
+        <div class="login-footer"><span>Don't have an account? </span><a onclick="showRegister()">Register</a></div>
+
+      </div>
+      <!-- REGISTER FORM: MULTI-STEP -->
+      <div id="registerForm" style="display:none">
+
+        <!-- STEP 1: Choose Role -->
+        <div id="regStep1">
+          <div class="login-logo">
+            <h1>JOIN <span>FITCORE</span></h1>
+            <p>Choose your account type</p>
+          </div>
+          <div id="regError" class="error-msg"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px">
+            <div id="roleCardStaff" onclick="selectRegRole('staff')" style="cursor:pointer;background:var(--navy-700);border:2px solid var(--navy-600);border-radius:12px;padding:20px 14px;text-align:center;transition:.2s">
+              <div style="font-size:32px;margin-bottom:8px">🖥️</div>
+              <div style="font-size:14px;font-weight:800;color:var(--white);text-transform:uppercase;letter-spacing:.5px">Staff</div>
+              <div style="font-size:11px;color:var(--gray-500);margin-top:4px;line-height:1.4">Front desk, billing & member management</div>
+            </div>
+            <div id="roleCardTrainer" onclick="selectRegRole('trainer')" style="cursor:pointer;background:var(--navy-700);border:2px solid var(--navy-600);border-radius:12px;padding:20px 14px;text-align:center;transition:.2s">
+              <div style="font-size:32px;margin-bottom:8px">🏋️</div>
+              <div style="font-size:14px;font-weight:800;color:var(--white);text-transform:uppercase;letter-spacing:.5px">Trainer</div>
+              <div style="font-size:11px;color:var(--gray-500);margin-top:4px;line-height:1.4">Personal coach & session management</div>
+            </div>
+          </div>
+          <input type="hidden" id="regRole">
+          <button class="btn-primary" onclick="regStep1Next()">Continue →</button>
+          <div class="login-footer"><a onclick="showLogin()">← Back to Login</a></div>
+        </div>
+
+        <!-- STEP 2: Account Info -->
+        <div id="regStep2" style="display:none">
+          <div class="login-logo">
+            <h1>CREATE <span>ACCOUNT</span></h1>
+            <p id="regStep2Sub">Staff Registration</p>
+          </div>
+          <!-- Step indicator -->
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:20px">
+            <div style="width:28px;height:4px;border-radius:2px;background:var(--orange)"></div>
+            <div style="flex:1;height:4px;border-radius:2px" id="regStepBar2" style="background:var(--navy-600)"></div>
+          </div>
+          <div id="regError2" class="error-msg"></div>
+          <div class="form-group">
+            <label>Full Name *</label>
+            <input type="text" id="regName" placeholder="Enter your full name">
+          </div>
+          <div class="form-group">
+            <label>Contact Number *</label>
+            <div class="phone-wrap">
+              <div class="phone-flag-btn" id="phoneFlagBtn" onclick="toggleCountryDrop()">
+                <span id="phoneFlag">🇵🇭</span>
+                <span id="phoneDialCode">+63</span>
+                <span class="phone-caret">▾</span>
+              </div>
+              <input type="tel" id="regContact" placeholder="9171234567" class="phone-number-input">
+              <div class="country-drop" id="countryDrop">
+                <input type="text" class="country-search" id="countrySearch" placeholder="Search country..." oninput="filterCountries(this.value)" onclick="event.stopPropagation()">
+                <div class="country-list" id="countryList"></div>
+              </div>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Username *</label>
+            <input type="text" id="regUser" placeholder="Choose a username">
+          </div>
+          <div class="form-group">
+            <label>Password *</label>
+            <div class="input-wrap">
+              <input type="password" id="regPass" placeholder="Min 6 characters" oninput="updateStrength(this.value)">
+              <button type="button" class="pw-toggle" onclick="togglePw('regPass',this)" aria-label="Toggle password visibility"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+            </div>
+            <div class="pw-strength"><div class="pw-strength-bar" id="ps1"></div><div class="pw-strength-bar" id="ps2"></div><div class="pw-strength-bar" id="ps3"></div></div>
+            <div class="pw-strength-label" id="psLabel"></div>
+          </div>
+          <div class="form-group">
+            <label>Confirm Password *</label>
+            <div class="input-wrap">
+              <input type="password" id="regPass2" placeholder="Repeat password">
+              <button type="button" class="pw-toggle" onclick="togglePw('regPass2',this)" aria-label="Toggle password visibility"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+            </div>
+          </div>
+          <div id="regSuccess" class="success-msg"></div>
+          <!-- Staff: submit here. Trainer: go to step 3 -->
+          <button class="btn-primary" id="regStep2Btn" onclick="regStep2Next()">Continue →</button>
+          <div class="login-footer"><a onclick="regGoStep1()">← Back</a></div>
+        </div>
+
+        <!-- STEP 3: Trainer Profile (trainer only) -->
+        <div id="regStep3" style="display:none">
+          <div class="login-logo">
+            <h1>TRAINER <span>PROFILE</span></h1>
+            <p>Tell us about your expertise</p>
+          </div>
+          <!-- Step indicator -->
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:20px">
+            <div style="width:28px;height:4px;border-radius:2px;background:var(--orange)"></div>
+            <div style="flex:1;height:4px;border-radius:2px;background:var(--orange)"></div>
+          </div>
+          <div id="regError3" class="error-msg"></div>
+          <div class="form-group">
+            <label>Coach / Display Name *</label>
+            <input type="text" id="regCoachName" placeholder="e.g. Coach Ryan">
+          </div>
+          <div class="form-group">
+            <label>Specializations *</label>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px" id="regSpecGrid">
+              <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s" onmouseover="this.style.borderColor='var(--orange)'" onmouseout="if(!this.querySelector('input').checked)this.style.borderColor='var(--navy-600)'"><input type="checkbox" value="Personal Training" style="accent-color:var(--orange);width:14px;height:14px"> Personal Training</label>
+              <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s" onmouseover="this.style.borderColor='var(--orange)'" onmouseout="if(!this.querySelector('input').checked)this.style.borderColor='var(--navy-600)'"><input type="checkbox" value="Strength Training" style="accent-color:var(--orange);width:14px;height:14px"> Strength Training</label>
+              <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s" onmouseover="this.style.borderColor='var(--orange)'" onmouseout="if(!this.querySelector('input').checked)this.style.borderColor='var(--navy-600)'"><input type="checkbox" value="Cardio" style="accent-color:var(--orange);width:14px;height:14px"> Cardio</label>
+              <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s" onmouseover="this.style.borderColor='var(--orange)'" onmouseout="if(!this.querySelector('input').checked)this.style.borderColor='var(--navy-600)'"><input type="checkbox" value="Yoga" style="accent-color:var(--orange);width:14px;height:14px"> Yoga</label>
+              <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s" onmouseover="this.style.borderColor='var(--orange)'" onmouseout="if(!this.querySelector('input').checked)this.style.borderColor='var(--navy-600)'"><input type="checkbox" value="Zumba" style="accent-color:var(--orange);width:14px;height:14px"> Zumba</label>
+              <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s" onmouseover="this.style.borderColor='var(--orange)'" onmouseout="if(!this.querySelector('input').checked)this.style.borderColor='var(--navy-600)'"><input type="checkbox" value="HIIT" style="accent-color:var(--orange);width:14px;height:14px"> HIIT</label>
+              <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s" onmouseover="this.style.borderColor='var(--orange)'" onmouseout="if(!this.querySelector('input').checked)this.style.borderColor='var(--navy-600)'"><input type="checkbox" value="Flexibility" style="accent-color:var(--orange);width:14px;height:14px"> Flexibility</label>
+              <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s" onmouseover="this.style.borderColor='var(--orange)'" onmouseout="if(!this.querySelector('input').checked)this.style.borderColor='var(--navy-600)'"><input type="checkbox" value="CrossFit" style="accent-color:var(--orange);width:14px;height:14px"> CrossFit</label>
+              <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s" onmouseover="this.style.borderColor='var(--orange)'" onmouseout="if(!this.querySelector('input').checked)this.style.borderColor='var(--navy-600)'"><input type="checkbox" value="Body Building" style="accent-color:var(--orange);width:14px;height:14px"> Body Building</label>
+              <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s" onmouseover="this.style.borderColor='var(--orange)'" onmouseout="if(!this.querySelector('input').checked)this.style.borderColor='var(--navy-600)'"><input type="checkbox" value="Muay Thai" style="accent-color:var(--orange);width:14px;height:14px"> Muay Thai</label>
+              <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s" onmouseover="this.style.borderColor='var(--orange)'" onmouseout="if(!this.querySelector('input').checked)this.style.borderColor='var(--navy-600)'"><input type="checkbox" value="Boxing" style="accent-color:var(--orange);width:14px;height:14px"> Boxing</label>
+              <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s" onmouseover="this.style.borderColor='var(--orange)'" onmouseout="if(!this.querySelector('input').checked)this.style.borderColor='var(--navy-600)'"><input type="checkbox" value="Pilates" style="accent-color:var(--orange);width:14px;height:14px"> Pilates</label>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Availability *</label>
+            <div style="margin-top:4px">
+              <div style="font-size:10px;color:var(--gray-500);margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:1px">Days Available</div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px" id="regAvailDays">
+                <label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:6px;padding:6px 10px;transition:.2s" onmouseover="this.style.borderColor='var(--orange)'" onmouseout="if(!this.querySelector('input').checked)this.style.borderColor='var(--navy-600)'"><input type="checkbox" value="Mon" style="accent-color:var(--orange)"> Mon</label>
+                <label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:6px;padding:6px 10px;transition:.2s" onmouseover="this.style.borderColor='var(--orange)'" onmouseout="if(!this.querySelector('input').checked)this.style.borderColor='var(--navy-600)'"><input type="checkbox" value="Tue" style="accent-color:var(--orange)"> Tue</label>
+                <label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:6px;padding:6px 10px;transition:.2s" onmouseover="this.style.borderColor='var(--orange)'" onmouseout="if(!this.querySelector('input').checked)this.style.borderColor='var(--navy-600)'"><input type="checkbox" value="Wed" style="accent-color:var(--orange)"> Wed</label>
+                <label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:6px;padding:6px 10px;transition:.2s" onmouseover="this.style.borderColor='var(--orange)'" onmouseout="if(!this.querySelector('input').checked)this.style.borderColor='var(--navy-600)'"><input type="checkbox" value="Thu" style="accent-color:var(--orange)"> Thu</label>
+                <label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:6px;padding:6px 10px;transition:.2s" onmouseover="this.style.borderColor='var(--orange)'" onmouseout="if(!this.querySelector('input').checked)this.style.borderColor='var(--navy-600)'"><input type="checkbox" value="Fri" style="accent-color:var(--orange)"> Fri</label>
+                <label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:6px;padding:6px 10px;transition:.2s" onmouseover="this.style.borderColor='var(--orange)'" onmouseout="if(!this.querySelector('input').checked)this.style.borderColor='var(--navy-600)'"><input type="checkbox" value="Sat" style="accent-color:var(--orange)"> Sat</label>
+                <label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:6px;padding:6px 10px;transition:.2s" onmouseover="this.style.borderColor='var(--orange)'" onmouseout="if(!this.querySelector('input').checked)this.style.borderColor='var(--navy-600)'"><input type="checkbox" value="Sun" style="accent-color:var(--orange)"> Sun</label>
+              </div>
+              <div style="font-size:10px;color:var(--gray-500);margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:1px">Available Hours</div>
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="flex:1">
+                  <div style="font-size:10px;color:var(--gray-500);margin-bottom:4px">From</div>
+                  <select id="regAvailFrom" style="width:100%;padding:9px 10px;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:8px;color:var(--white);outline:none;font-size:13px">
+                    <option value="">-- Start</option>
+                    <option>5:00 AM</option><option>6:00 AM</option><option>7:00 AM</option>
+                    <option>8:00 AM</option><option>9:00 AM</option><option>10:00 AM</option>
+                    <option>11:00 AM</option><option>12:00 PM</option><option>1:00 PM</option>
+                    <option>2:00 PM</option><option>3:00 PM</option><option>4:00 PM</option>
+                    <option>5:00 PM</option><option>6:00 PM</option><option>7:00 PM</option>
+                    <option>8:00 PM</option>
+                  </select>
+                </div>
+                <div style="color:var(--gray-500);font-size:18px;padding-top:16px">–</div>
+                <div style="flex:1">
+                  <div style="font-size:10px;color:var(--gray-500);margin-bottom:4px">To</div>
+                  <select id="regAvailTo" style="width:100%;padding:9px 10px;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:8px;color:var(--white);outline:none;font-size:13px">
+                    <option value="">-- End</option>
+                    <option>6:00 AM</option><option>7:00 AM</option><option>8:00 AM</option>
+                    <option>9:00 AM</option><option>10:00 AM</option><option>11:00 AM</option>
+                    <option>12:00 PM</option><option>1:00 PM</option><option>2:00 PM</option>
+                    <option>3:00 PM</option><option>4:00 PM</option><option>5:00 PM</option>
+                    <option>6:00 PM</option><option>7:00 PM</option><option>8:00 PM</option>
+                    <option>9:00 PM</option><option>10:00 PM</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Bio / Short Description</label>
+            <textarea id="regBio" placeholder="Tell members about your training style, experience, certifications…" rows="3" style="resize:vertical;min-height:72px"></textarea>
+          </div>
+          <div id="regSuccess3" class="success-msg"></div>
+          <button class="btn-primary" onclick="doRegister()">✓ Create Account</button>
+          <div class="login-footer"><a onclick="regGoStep2()">← Back</a></div>
+        </div>
+
+      </div>
+    </div><!-- /login-card -->
+  </div><!-- /login-wrap -->
+  </div><!-- /landingRegister -->
+
+  <!-- FOOTER -->
+  <footer class="site-footer">
+    <div class="sf-grid">
+      <div class="sf-col sf-brand-col">
+        <div class="sf-brand">FIT<span>CORE</span></div>
+        <p>A complete gym management system for local fitness centers — members, billing, trainer schedules, walk-ins, and reports in one place.</p>
+      </div>
+      <div class="sf-col">
+        <h4>Explore</h4>
+        <a onclick="showLandingSection('home',null)">Home</a>
+        <a onclick="showLandingSection('features',null)">Features</a>
+        <a onclick="showLandingSection('explore',null)">Membership Plans</a>
+        <a onclick="showLandingSection('trainers',null)">Our Trainers</a>
+        <a onclick="showLandingSection('reviews',null)">Member Stories</a>
+      </div>
+      <div class="sf-col">
+        <h4>Membership</h4>
+        <a onclick="showLandingSection('explore',null)">Basic — &#8369;500/mo</a>
+        <a onclick="showLandingSection('explore',null)">Standard — &#8369;900/mo</a>
+        <a onclick="showLandingSection('explore',null)">Premium — &#8369;1,500/3mo</a>
+        <a onclick="showLandingSection('explore',null)">Walk-In — &#8369;100/day</a>
+      </div>
+      <div class="sf-col">
+        <h4>Contact</h4>
+        <div class="sf-contact-row"><span class="sf-contact-icon">&#128205;</span>123 Fitness Ave, Poblacion District</div>
+        <div class="sf-contact-row"><span class="sf-contact-icon">&#128222;</span>(032) 555-1234</div>
+        <div class="sf-contact-row"><span class="sf-contact-icon">&#9993;</span>hello@fitcore.gym</div>
+        <div class="sf-contact-row"><span class="sf-contact-icon">&#128368;</span>Mon–Sat 5AM–10PM · Sun 7AM–6PM</div>
+      </div>
+    </div>
+    <div class="sf-bottom">&copy; 2026 FITCORE — Gym Management System. All rights reserved.</div>
+  </footer>
+</div><!-- /loginPage -->
+
+<!-- ============================================================ APP ============================================================ -->
+<div id="app">
+  <!-- Sidebar overlay for mobile -->
+  <div class="sidebar-overlay" id="sidebarOverlay" onclick="closeSidebar()"></div>
+  <!-- SIDEBAR -->
+  <div class="sidebar" id="appSidebar">
+    <div class="sidebar-brand">
+      <div class="brand-row">
+        <div class="brand-name">FIT<span>CORE</span></div>
+      </div>
+    </div>
+    <div class="sidebar-user" onclick="openStaffEditModal()" style="cursor:pointer;transition:.2s" onmouseover="this.style.background='rgba(114,133,255,.08)'" onmouseout="this.style.background=''">
+      <div class="user-badge">
+        <div class="user-avatar" id="sideUserAvatar"></div>
+        <div class="user-info">
+          <div class="user-name" id="sideUserName"></div>
+          <span class="role-badge" id="sideUserRole"></span>
+        </div>
+        <span style="margin-left:auto;font-size:13px;color:var(--gray-500);flex-shrink:0" title="Edit Profile">&#9998;</span>
+      </div>
+    </div>
+    <nav class="sidebar-nav" id="sideNav"></nav>
+    <div class="sidebar-footer">
+      <div class="nav-logout" onclick="confirmLogout()">
+        <span class="nav-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span> Logout
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div class="main">
+    <div class="topbar">
+      <button class="topbar-menu-btn" onclick="toggleSidebar()" aria-label="Menu">☰</button><div class="topbar-title" id="pageTitle">Dashboard</div>
+      <div class="topbar-right">
+        <div class="topbar-date" id="topDate"></div>
+        <div class="user-avatar" id="topAvatar" style="width:34px;height:34px;font-size:12px;font-weight:700;flex-shrink:0;cursor:pointer;transition:.2s" title="Edit My Profile" onclick="openStaffEditModal()" onmouseover="this.style.opacity='.8'" onmouseout="this.style.opacity='1'"></div>
+      </div>
+    </div>
+    <div class="content">
+      <!-- PANELS -->
+      <div class="panel" id="panelDashboard"></div>
+      <div class="panel" id="panelMembers"></div>
+      <div class="panel" id="panelBilling"></div>
+      <div class="panel" id="panelSchedule"></div>
+      <div class="panel" id="panelNotifications"></div>
+      <div class="panel" id="panelPlans"></div>
+      <div class="panel" id="panelWalkin"></div>
+      <div class="panel" id="panelReports"></div>
+      <div class="panel" id="panelUsers"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ MODALS ============================================================ -->
+<!-- Staff Edit Profile Modal -->
+<div class="modal-overlay" id="staffEditProfileModal">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-head">
+      <h2>&#9998; Edit My Profile</h2>
+      <button class="modal-close" onclick="closeModal('staffEditProfileModal')">&#10005;</button>
+    </div>
+    <div class="modal-body">
+      <div id="sepError" class="error-msg"></div>
+      <div style="display:flex;align-items:center;gap:16px;margin-bottom:24px;padding:16px;background:rgba(114,133,255,.06);border:1px solid rgba(114,133,255,.18);border-radius:10px">
+        <div id="sep_avatar" class="user-avatar avatar-staff" style="width:56px;height:56px;font-size:18px;font-weight:800;border-radius:12px;flex-shrink:0"></div>
+        <div>
+          <div id="sep_display_name" style="font-size:16px;font-weight:800;color:var(--white)"></div>
+          <div id="sep_display_username" style="font-size:11px;font-family:monospace;color:var(--gray-500);margin-top:2px"></div>
+          <span style="font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1px;padding:2px 8px;border-radius:4px;background:rgba(114,133,255,.2);color:#aab5ff;margin-top:6px;display:inline-block">Staff</span>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Full Name *</label>
+        <input type="text" id="sep_name" placeholder="Your full name" oninput="document.getElementById('sep_avatar').textContent=initials(this.value||currentUser.name);document.getElementById('sep_display_name').textContent=this.value||currentUser.name">
+      </div>
+      <div class="form-group">
+        <label>Contact Number</label>
+        <input type="text" id="sep_contact" placeholder="e.g. 09171234567">
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-secondary" onclick="closeModal('staffEditProfileModal')">Cancel</button>
+      <button class="btn-primary" onclick="saveStaffProfile()">&#10003; Save Changes</button>
+    </div>
+  </div>
+</div>
+<!-- Generic Confirm -->
+<div class="modal-overlay" id="confirmModal" style="z-index:1100;background:rgba(0,0,0,.5);backdrop-filter:blur(2px)">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-head"><h2 id="confirmTitle">Confirm Action</h2><button class="modal-close" onclick="closeModal('confirmModal')">✕</button></div>
+    <div class="modal-body"><div class="confirm-dialog"><p id="confirmMsg"></p><div class="confirm-btns" style="margin-top:16px"><button class="btn-secondary btn-sm" onclick="closeModal('confirmModal')">Cancel</button><button class="btn-danger btn-sm" id="confirmOkBtn">Delete</button></div></div></div>
+  </div>
+</div>
+<!-- Member Modal -->
+<div class="modal-overlay" id="memberModal">
+  <div class="modal modal-lg">
+    <div class="modal-head"><h2 id="memberModalTitle">Add Member</h2><button class="modal-close" onclick="closeModal('memberModal')">✕</button></div>
+    <div class="modal-body">
+      <div id="memberFormError" class="error-msg"></div>
+      <div class="form-row">
+        <div class="form-group"><label>Full Name *</label><input type="text" id="mf_name"></div>
+        <div class="form-group"><label>Contact Number *</label><input type="text" id="mf_contact"></div>
+      </div>
+      <div class="form-row cols-3">
+        <div class="form-group"><label>Age</label><input type="number" id="mf_age" min="1" max="120"></div>
+        <div class="form-group"><label>Sex</label><select id="mf_sex"><option value="">Select</option><option>Male</option><option>Female</option></select></div>
+        <div class="form-group"><label>Membership Plan *</label><select id="mf_plan"></select><div id="mf_plan_note" style="display:none;align-items:center;gap:6px;margin-top:6px;background:rgba(114,133,255,.08);border:1px solid rgba(114,133,255,.2);border-radius:6px;padding:7px 10px;font-size:11px;color:var(--orange);font-weight:600"><span style="font-size:14px">🔒</span> Only Admin can change the membership plan</div></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Start Date *</label><input type="date" id="mf_start"></div>
+        <div class="form-group"><label>Address</label><input type="text" id="mf_address"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Emergency Contact Name</label><input type="text" id="mf_ecname"></div>
+        <div class="form-group"><label>Emergency Contact Number</label><input type="text" id="mf_ecnum"></div>
+      </div>
+      <div class="form-group"><label>Medical / Special Notes</label><textarea id="mf_notes" rows="2"></textarea></div>
+      <!-- BILLING & PAYMENT SECTION -->
+      <div id="mf_billing_section" style="border-top:1px solid rgba(114,133,255,.2);margin-top:16px;padding-top:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:2px;color:var(--orange)">💳 Billing & Payment</div>
+          <div id="mf_billing_note" style="display:none;align-items:center;gap:6px;background:rgba(114,133,255,.08);border:1px solid rgba(114,133,255,.2);border-radius:6px;padding:5px 10px;font-size:11px;color:var(--orange);font-weight:600"><span>🔒</span> Only Admin can edit payment details</div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Payment Date *</label><input type="date" id="mf_paydate"></div>
+          <div class="form-group"><label>Amount Paid (₱) *</label><input type="number" id="mf_amount" readonly style="background:rgba(52,211,153,.05);border-color:rgba(52,211,153,.2);cursor:not-allowed" placeholder="Auto-filled from plan"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Payment Method *</label><select id="mf_method"><option value="">Select</option><option>Cash</option><option>GCash</option><option>Bank Transfer</option></select></div>
+          <div class="form-group"><label>Notes</label><input type="text" id="mf_paynotes" placeholder="Optional"></div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn-secondary" onclick="closeModal('memberModal')">Cancel</button><button class="btn-primary" onclick="saveMember()">Save Member</button></div>
+  </div>
+</div>
+<!-- Member Profile Modal -->
+<div class="modal-overlay" id="profileModal">
+  <div class="modal modal-xl">
+    <div class="modal-head"><h2>Member Profile</h2><button class="modal-close" onclick="closeModal('profileModal')">✕</button></div>
+    <div class="modal-body" id="profileModalBody"></div>
+    <div class="modal-foot"><button class="btn-secondary" onclick="closeModal('profileModal')">Close</button><button class="btn-primary" onclick="openEditFromProfile()">Edit Profile</button></div>
+  </div>
+</div>
+<!-- Payment Modal -->
+<div class="modal-overlay" id="paymentModal">
+  <div class="modal">
+    <div class="modal-head"><h2 id="paymentModalTitle">Record Payment</h2><button class="modal-close" onclick="closeModal('paymentModal')">✕</button></div>
+    <div class="modal-body">
+      <div id="paymentFormError" class="error-msg"></div>
+      <div class="form-group"><label>Member *</label>
+        <input type="text" id="pf_memberSearch" placeholder="Type to search member..." oninput="filterMemberDropdown(this.value)" autocomplete="off">
+        <div id="pf_memberList" style="background:var(--navy-700);border:1px solid var(--navy-600);border-radius:8px;max-height:150px;overflow-y:auto;display:none;position:relative;z-index:10"></div>
+        <input type="hidden" id="pf_memberId">
+      </div>
+      <div class="form-group"><label>Membership Package *</label><select id="pf_plan" onchange="onPayPlanChange()"><option value="">Select plan</option></select></div>
+      <div class="form-row">
+        <div class="form-group"><label>Amount Paid (₱) *</label><input type="number" id="pf_amount" min="1" step="0.01" readonly style="background:rgba(52,211,153,.05);border-color:rgba(52,211,153,.2);cursor:not-allowed"></div>
+        <div class="form-group"><label>Payment Date *</label><input type="date" id="pf_date"></div>
+      </div>
+      <div class="form-group"><label>Payment Method *</label><select id="pf_method"><option value="">Select</option><option>Cash</option><option>GCash</option><option>Bank Transfer</option></select></div>
+      <div class="form-group"><label>Notes</label><textarea id="pf_notes" rows="2"></textarea></div>
+    </div>
+    <div class="modal-foot"><button class="btn-secondary" onclick="closeModal('paymentModal')">Cancel</button><button class="btn-primary" onclick="savePayment()">Record Payment</button></div>
+  </div>
+</div>
+<!-- Receipt Modal -->
+<div class="modal-overlay" id="receiptModal">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-head"><h2>Payment Receipt</h2><button class="modal-close" onclick="closeModal('receiptModal')">✕</button></div>
+    <div class="modal-body" id="receiptBody"></div>
+    <div class="modal-foot"><button class="btn-secondary" onclick="closeModal('receiptModal')">Close</button><button class="btn-primary" onclick="window.print()">Print Receipt</button></div>
+  </div>
+</div>
+<!-- Edit Payment Modal -->
+<div class="modal-overlay" id="editPaymentModal">
+  <div class="modal">
+    <div class="modal-head"><h2>✏️ Edit Payment</h2><button class="modal-close" onclick="closeModal('editPaymentModal')">✕</button></div>
+    <div class="modal-body">
+      <div id="editPaymentError" class="error-msg"></div>
+      <div style="background:rgba(114,133,255,.06);border:1px solid rgba(114,133,255,.2);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--gray-300);margin-bottom:16px">
+        ⚠️ Editing a payment will also update the member's plan and expiry date accordingly.
+      </div>
+      <input type="hidden" id="ep_id">
+      <input type="hidden" id="ep_memberId">
+      <div class="form-group"><label>Member</label><input type="text" id="ep_memberName" disabled style="opacity:.6;cursor:not-allowed"></div>
+      <div class="form-group"><label>Membership Package *</label><select id="ep_plan" onchange="onEditPlanChange()"><option value="">Select plan</option></select></div>
+      <div class="form-row">
+        <div class="form-group"><label>Amount Paid (₱) *</label><input type="number" id="ep_amount" min="1" step="0.01"></div>
+        <div class="form-group"><label>Payment Date *</label><input type="date" id="ep_date"></div>
+      </div>
+      <div class="form-group"><label>Payment Method *</label>
+        <select id="ep_method"><option value="">Select</option><option>Cash</option><option>GCash</option><option>Bank Transfer</option></select>
+      </div>
+      <div class="form-group"><label>Notes</label><textarea id="ep_notes" rows="2"></textarea></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-secondary" onclick="closeModal('editPaymentModal')">Cancel</button>
+      <button class="btn-primary" onclick="saveEditPayment()">💾 Save Changes</button>
+    </div>
+  </div>
+</div>
+<!-- Session Modal -->
+<div class="modal-overlay" id="sessionModal">
+  <div class="modal">
+    <div class="modal-head"><h2 id="sessionModalTitle">Create Session</h2><button class="modal-close" onclick="closeModal('sessionModal')">✕</button></div>
+    <div class="modal-body">
+      <div id="sessionFormError" class="error-msg"></div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Trainer *</label>
+          <input type="text" id="sf_trainerSearch" placeholder="Search trainer..." oninput="filterSessionTrainer(this.value)" onclick="filterSessionTrainer(this.value)" autocomplete="off">
+          <div id="sf_trainerList" style="background:var(--navy-700);border:1px solid var(--navy-600);border-radius:8px;max-height:160px;overflow-y:auto;display:none;position:relative;z-index:20"></div>
+          <input type="hidden" id="sf_trainer">
+        </div>
+        <div class="form-group"><label>Member *</label>
+          <input type="text" id="sf_memberSearch" placeholder="Search member..." oninput="filterSessionMember(this.value)" autocomplete="off">
+          <div id="sf_memberList" style="background:var(--navy-700);border:1px solid var(--navy-600);border-radius:8px;max-height:130px;overflow-y:auto;display:none;position:relative;z-index:10"></div>
+          <input type="hidden" id="sf_memberId">
+        </div>
+      </div>
+      <div class="form-group"><label>Session Type *</label><select id="sf_type"><option value="">Select type</option><option>Personal Training</option><option>Cardio</option><option>Strength</option><option>Flexibility</option><option>Assessment</option></select></div>
+      <div class="form-row cols-3">
+        <div class="form-group"><label>Date *</label><input type="date" id="sf_date"></div>
+        <div class="form-group"><label>Start Time *</label><select id="sf_start"></select></div>
+        <div class="form-group"><label>End Time *</label><select id="sf_end"></select></div>
+      </div>
+      <div class="form-group"><label>Notes</label><textarea id="sf_notes" rows="2"></textarea></div>
+    </div>
+    <div class="modal-foot"><button class="btn-secondary" onclick="closeModal('sessionModal')">Cancel</button><button class="btn-primary" onclick="saveSession()">Save Session</button></div>
+  </div>
+</div>
+
+<!-- Session Info Modal -->
+<div class="modal-overlay" id="sessionInfoModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h2>Session Details</h2>
+      <button class="modal-close" onclick="closeModal('sessionInfoModal')">✕</button>
+    </div>
+    <div class="modal-body" id="sessionInfoBody" style="padding:24px"></div>
+    <div class="modal-foot" id="sessionInfoFoot"></div>
+  </div>
+</div>
+<!-- Plan Modal -->
+<div class="modal-overlay" id="planModal">
+  <div class="modal">
+    <div class="modal-head"><h2 id="planModalTitle">Add Plan</h2><button class="modal-close" onclick="closeModal('planModal')">✕</button></div>
+    <div class="modal-body">
+      <div id="planFormError" class="error-msg"></div>
+      <div class="form-row">
+        <div class="form-group"><label>Plan Name *</label><input type="text" id="plf_name"></div>
+        <div class="form-group"><label>Price (₱) *</label><input type="number" id="plf_price" min="1" step="0.01"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Duration (months) *</label><input type="number" id="plf_dur" min="1"></div>
+        <div class="form-group">
+          <label>Session Limit *</label>
+          <input type="number" id="plf_sessions" min="1" placeholder="Number of sessions">
+          <div class="unlimited-toggle"><input type="checkbox" id="plf_unlimited" onchange="toggleUnlimited(this)"> <label for="plf_unlimited">Unlimited sessions</label></div>
+        </div>
+      </div>
+      <div class="form-group"><label>Benefits</label><textarea id="plf_benefits" rows="3" placeholder="One benefit per line or comma-separated"></textarea></div>
+      <div class="form-group"><label>Status</label><select id="plf_status"><option value="Active">Active</option><option value="Inactive">Inactive</option></select></div>
+    </div>
+    <div class="modal-foot"><button class="btn-secondary" onclick="closeModal('planModal')">Cancel</button><button class="btn-primary" onclick="savePlan()">Save Plan</button></div>
+  </div>
+</div>
+<!-- User Modal -->
+<div class="modal-overlay" id="userModal">
+  <div class="modal">
+    <div class="modal-head"><h2 id="userModalTitle">Add User</h2><button class="modal-close" onclick="closeModal('userModal')">✕</button></div>
+    <div class="modal-body">
+      <div id="userFormError" class="error-msg"></div>
+      <div class="form-row">
+        <div class="form-group"><label>Full Name *</label><input type="text" id="uf_name"></div>
+        <div class="form-group"><label>Contact Number *</label><input type="tel" id="uf_contact" placeholder="e.g. 09171234567" maxlength="11"></div>
+        <div class="form-group"><label>Username *</label><input type="text" id="uf_user"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Password *</label><div class="input-wrap"><input type="password" id="uf_pass" placeholder="Leave blank to keep current"><button type="button" class="pw-toggle" onclick="togglePw('uf_pass',this)" aria-label="Toggle password visibility"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></div></div>
+        <div class="form-group"><label>Confirm Password *</label><div class="input-wrap"><input type="password" id="uf_pass2" placeholder="Repeat password"><button type="button" class="pw-toggle" onclick="togglePw('uf_pass2',this)" aria-label="Toggle password visibility"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></div></div>
+      </div>
+      <div id="uf_role_row"><div class="form-group"><label>Role *</label><select id="uf_role"><option value="staff">Staff</option><option value="trainer">Trainer</option></select></div></div>
+    </div>
+    <div class="modal-foot"><button class="btn-secondary" onclick="closeModal('userModal')">Cancel</button><button class="btn-primary" onclick="saveUser()">Save User</button></div>
+  </div>
+</div>
+<!-- User Profile Modal -->
+<div class="modal-overlay" id="userProfileModal">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-head"><h2>👤 User Profile</h2><button class="modal-close" onclick="closeModal('userProfileModal')">✕</button></div>
+    <div class="modal-body">
+      <div style="display:flex;align-items:center;gap:16px;margin-bottom:24px">
+        <div id="up_avatar" class="user-avatar" style="width:64px;height:64px;font-size:20px;font-weight:800;border-radius:14px;flex-shrink:0"></div>
+        <div>
+          <div id="up_name" style="font-size:20px;font-weight:800;color:var(--white)"></div>
+          <div id="up_username" style="font-size:12px;font-family:monospace;color:var(--gray-500);margin-top:2px"></div>
+          <div id="up_role_badge" style="margin-top:6px"></div>
+        </div>
+      </div>
+      <div style="border-top:1px solid rgba(255,255,255,.06);padding-top:16px">
+        <div style="font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:2px;color:var(--gray-500);margin-bottom:12px">Account Information</div>
+        <div style="display:grid;gap:14px">
+          <div>
+            <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--gray-500);margin-bottom:4px">Contact</div>
+            <div id="up_contact" style="font-size:14px;color:var(--white);font-weight:600"></div>
+          </div>
+          <div>
+            <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--gray-500);margin-bottom:4px">Username</div>
+            <div id="up_user2" style="font-size:14px;color:var(--white);font-weight:600;font-family:monospace"></div>
+          </div>
+          <div>
+            <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--gray-500);margin-bottom:4px">Password</div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <div id="up_pass" style="font-size:14px;color:var(--white);font-weight:600;font-family:monospace;letter-spacing:2px">••••••••</div>
+              <button onclick="toggleUpPass()" style="background:none;border:none;color:var(--gray-500);cursor:pointer;font-size:14px;padding:2px 6px" id="up_pass_btn">👁</button>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--gray-500);margin-bottom:4px">Status</div>
+            <div id="up_status"></div>
+          </div>
+          <div>
+            <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--gray-500);margin-bottom:4px">Created</div>
+            <div id="up_created" style="font-size:14px;color:var(--white);font-weight:600"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-secondary" onclick="closeModal('userProfileModal')">Close</button>
+      <button class="btn-primary" id="up_edit_btn" onclick="">Edit Profile</button>
+    </div>
+  </div>
+</div>
+<!-- Check-In Modal -->
+<div class="modal-overlay" id="checkinModal">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-head"><h2>✅ Check In Member</h2><button class="modal-close" onclick="closeModal('checkinModal')">✕</button></div>
+    <div class="modal-body">
+      <div id="checkinError" class="error-msg"></div>
+      <div class="form-group">
+        <label>Search Member *</label>
+        <input type="text" id="ci_search" placeholder="Type name or ID to search…" oninput="filterCheckinList(this.value)" autocomplete="off">
+        <div id="ci_list" style="background:var(--navy-700);border:1px solid var(--navy-600);border-radius:8px;max-height:180px;overflow-y:auto;display:none;margin-top:4px;position:relative;z-index:10"></div>
+        <input type="hidden" id="ci_member">
+        <div id="ci_selected" style="display:none;margin-top:8px;background:rgba(52,211,153,.07);border:1px solid rgba(52,211,153,.2);border-radius:8px;padding:9px 12px;font-size:13px;color:var(--green)"></div>
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn-secondary" onclick="closeModal('checkinModal')">Cancel</button><button class="btn-primary" onclick="doCheckin()">Confirm Check-In</button></div>
+  </div>
+</div>
+<!-- Check-Out Modal -->
+<div class="modal-overlay" id="checkoutModal">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-head"><h2>🚪 Check Out Member</h2><button class="modal-close" onclick="closeModal('checkoutModal')">✕</button></div>
+    <div class="modal-body">
+      <div id="checkoutError" class="error-msg"></div>
+      <div class="form-group" style="position:relative">
+        <label>Search Checked-In Member *</label>
+        <input type="text" id="co_search" placeholder="Type name to search…" oninput="filterCheckoutList(this.value)" autocomplete="off">
+        <div id="co_list" style="background:var(--navy-700);border:1px solid var(--navy-600);border-radius:8px;max-height:180px;overflow-y:auto;display:none;margin-top:4px;position:absolute;width:100%;z-index:10"></div>
+        <input type="hidden" id="co_member">
+        <div id="co_selected" style="display:none;margin-top:8px;background:rgba(114,133,255,.07);border:1px solid rgba(114,133,255,.2);border-radius:8px;padding:9px 12px;font-size:13px;color:var(--orange)"></div>
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn-secondary" onclick="closeModal('checkoutModal')">Cancel</button><button class="btn-primary" onclick="doCheckout()">Confirm Check-Out</button></div>
+  </div>
+</div>
+
+<!-- Walk-In Modal -->
+<div class="modal-overlay" id="walkinModal">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-head"><h2>Register Walk-In Visitor</h2><button class="modal-close" onclick="closeModal('walkinModal')">✕</button></div>
+    <div class="modal-body">
+      <div id="walkinError" class="error-msg"></div>
+      <div class="form-group"><label>Visitor Name *</label><input type="text" id="wi_name" placeholder="Enter visitor's full name"></div>
+      <div style="background:var(--navy-700);border-radius:10px;padding:14px;margin-top:8px;text-align:center">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--gray-500);margin-bottom:4px">Walk-In Fee</div>
+        <div style="font-size:32px;font-weight:900;font-family:'Barlow Condensed',sans-serif;color:var(--orange)">₱100.00</div>
+        <div style="font-size:11px;color:var(--gray-500);margin-top:2px">Fixed daily rate · Single visit</div>
+      </div>
+    </div>
+    <div class="modal-foot" id="walkinFooterDefault"><button class="btn-secondary" onclick="closeModal('walkinModal')">Cancel</button><button class="btn-primary" onclick="walkinAskConfirm()">Confirm &amp; Record</button></div>
+    <div class="modal-foot" id="walkinFooterConfirm" style="display:none;flex-direction:column;gap:10px">
+      <div style="background:rgba(114,133,255,.1);border:1px solid rgba(114,133,255,.3);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--orange);text-align:center">⚠️ Are you sure you want to record this walk-in and collect <strong>₱100.00</strong>?</div>
+      <div style="display:flex;gap:8px"><button class="btn-secondary" style="flex:1" onclick="walkinCancelConfirm()">Go Back</button><button class="btn-primary" style="flex:1" onclick="saveWalkin()">Yes, Record It</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST CONTAINER -->
+<div class="toast-wrap" id="toastWrap"></div>
+
+<!-- Trainer Edit Profile Modal -->
+<div class="modal-overlay" id="trainerEditProfileModal">
+  <div class="modal modal-lg" style="max-height:92vh">
+    <div class="modal-head">
+      <h2>&#9998; Edit My Profile</h2>
+      <button class="modal-close" onclick="closeModal('trainerEditProfileModal')">&#10005;</button>
+    </div>
+    <div class="modal-body" style="overflow-y:auto">
+      <div id="tepError" class="error-msg"></div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+        <div class="form-group">
+          <label>Full Name *</label>
+          <input type="text" id="tep_fullname" placeholder="Your legal full name">
+        </div>
+        <div class="form-group">
+          <label>Coach / Display Name</label>
+          <input type="text" id="tep_coachname" placeholder="e.g. Coach Ryan">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Specializations <span style="font-size:10px;color:var(--gray-500)">(What you're best at)</span></label>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-top:6px" id="tep_specs">
+          <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s">
+            <input type="checkbox" value="Personal Training" style="accent-color:var(--orange);width:14px;height:14px"> Personal Training
+          </label>
+          <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s">
+            <input type="checkbox" value="Strength Training" style="accent-color:var(--orange);width:14px;height:14px"> Strength Training
+          </label>
+          <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s">
+            <input type="checkbox" value="Cardio" style="accent-color:var(--orange);width:14px;height:14px"> Cardio
+          </label>
+          <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s">
+            <input type="checkbox" value="Yoga" style="accent-color:var(--orange);width:14px;height:14px"> Yoga
+          </label>
+          <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s">
+            <input type="checkbox" value="Zumba" style="accent-color:var(--orange);width:14px;height:14px"> Zumba
+          </label>
+          <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s">
+            <input type="checkbox" value="HIIT" style="accent-color:var(--orange);width:14px;height:14px"> HIIT
+          </label>
+          <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s">
+            <input type="checkbox" value="Flexibility" style="accent-color:var(--orange);width:14px;height:14px"> Flexibility
+          </label>
+          <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s">
+            <input type="checkbox" value="CrossFit" style="accent-color:var(--orange);width:14px;height:14px"> CrossFit
+          </label>
+          <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s">
+            <input type="checkbox" value="Body Building" style="accent-color:var(--orange);width:14px;height:14px"> Body Building
+          </label>
+          <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s">
+            <input type="checkbox" value="Muay Thai" style="accent-color:var(--orange);width:14px;height:14px"> Muay Thai
+          </label>
+          <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s">
+            <input type="checkbox" value="Boxing" style="accent-color:var(--orange);width:14px;height:14px"> Boxing
+          </label>
+          <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s">
+            <input type="checkbox" value="Pilates" style="accent-color:var(--orange);width:14px;height:14px"> Pilates
+          </label>
+        </div>
+      </div>
+
+      <div class="form-group" style="margin-top:4px">
+        <label>Availability</label>
+        <div style="font-size:10px;color:var(--gray-500);margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:1px">Days</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px" id="tep_days">
+          <label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:6px;padding:6px 12px;transition:.2s"><input type="checkbox" value="Mon" style="accent-color:var(--orange)"> Mon</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:6px;padding:6px 12px;transition:.2s"><input type="checkbox" value="Tue" style="accent-color:var(--orange)"> Tue</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:6px;padding:6px 12px;transition:.2s"><input type="checkbox" value="Wed" style="accent-color:var(--orange)"> Wed</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:6px;padding:6px 12px;transition:.2s"><input type="checkbox" value="Thu" style="accent-color:var(--orange)"> Thu</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:6px;padding:6px 12px;transition:.2s"><input type="checkbox" value="Fri" style="accent-color:var(--orange)"> Fri</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:6px;padding:6px 12px;transition:.2s"><input type="checkbox" value="Sat" style="accent-color:var(--orange)"> Sat</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:6px;padding:6px 12px;transition:.2s"><input type="checkbox" value="Sun" style="accent-color:var(--orange)"> Sun</label>
+        </div>
+        <div style="font-size:10px;color:var(--gray-500);margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:1px">Available Hours</div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="flex:1">
+            <div style="font-size:10px;color:var(--gray-500);margin-bottom:4px">From</div>
+            <select id="tep_from" style="width:100%;padding:9px 10px;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:8px;color:var(--white);outline:none;font-size:13px">
+              <option value="">-- Start</option>
+              <option>5:00 AM</option><option>6:00 AM</option><option>7:00 AM</option>
+              <option>8:00 AM</option><option>9:00 AM</option><option>10:00 AM</option>
+              <option>11:00 AM</option><option>12:00 PM</option><option>1:00 PM</option>
+              <option>2:00 PM</option><option>3:00 PM</option><option>4:00 PM</option>
+              <option>5:00 PM</option><option>6:00 PM</option><option>7:00 PM</option>
+              <option>8:00 PM</option>
+            </select>
+          </div>
+          <div style="color:var(--gray-500);font-size:20px;padding-top:16px">&ndash;</div>
+          <div style="flex:1">
+            <div style="font-size:10px;color:var(--gray-500);margin-bottom:4px">To</div>
+            <select id="tep_to" style="width:100%;padding:9px 10px;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:8px;color:var(--white);outline:none;font-size:13px">
+              <option value="">-- End</option>
+              <option>6:00 AM</option><option>7:00 AM</option><option>8:00 AM</option>
+              <option>9:00 AM</option><option>10:00 AM</option><option>11:00 AM</option>
+              <option>12:00 PM</option><option>1:00 PM</option><option>2:00 PM</option>
+              <option>3:00 PM</option><option>4:00 PM</option><option>5:00 PM</option>
+              <option>6:00 PM</option><option>7:00 PM</option><option>8:00 PM</option>
+              <option>9:00 PM</option><option>10:00 PM</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Bio / Short Description</label>
+        <textarea id="tep_bio" rows="3" placeholder="Tell members about your training style, experience, certifications&#8230;" style="resize:vertical;min-height:72px"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeModal('trainerEditProfileModal')">Cancel</button>
+      <button class="btn-primary" onclick="saveTrainerProfile()">&#10003; Save Profile</button>
+    </div>
+  </div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>

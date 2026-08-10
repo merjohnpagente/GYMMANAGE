@@ -1,0 +1,8 @@
+# opencode workspace scaffolding
+.opencode/
+docs/
+prompts/
+opencode.json
+
+# misc
+assets/resume.pdf
