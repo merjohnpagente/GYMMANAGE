@@ -1,4 +1,4 @@
-// ============================= DATA LAYER =============================
+﻿// ============================= DATA LAYER =============================
 const KEY={users:'gms_users',members:'gms_members',payments:'gms_payments',sessions:'gms_sessions',plans:'gms_plans',attendance:'gms_attendance',walkins:'gms_walkins',loginAttempts:'gms_login_attempts',activityLog:'gms_activity_log'};
 const DB={
   get:(k)=>{try{return JSON.parse(localStorage.getItem(k))||[];}catch{return[];}},
@@ -539,7 +539,10 @@ const ICONS={
   menu:`<line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/>`,
   file:`<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>`,
   bulb:`<path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5.76.76 1.23 1.52 1.41 2.5"/>`,
-  gear:`<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>`
+  gear:`<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>`,
+  wave:`<path d="M18 11V6a2 2 0 0 0-4 0v5"/><path d="M14 10V4a2 2 0 0 0-4 0v2"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>`,
+  ticket:`<path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/>`,
+  star:`<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>`
 };
 // Keys use the base codepoint only (no variation selector) so both "⚠" and
 // "⚠️" forms match; trailing U+FE0F is skipped by iconize().
@@ -552,7 +555,7 @@ const ICON_EMOJI={
   '🏃':'running',  '🔒':'lock','🔓':'unlock','🏁':'flag','☰':'menu','💡':'bulb','⚙':'gear','📄':'file',
   '🕒':'clock',
   '📍':'mapPin','✉':'mail',
-  '✓':'check','✔':'check','✕':'x','🙈':'eyeOff'
+  '✓':'check','✔':'check','✕':'x','🙈':'eyeOff','👋':'wave','🎟':'ticket','★':'star','✦':'star'
 };
 function iconSvg(name,size=16){
   const body=ICONS[name]||'';
@@ -647,7 +650,7 @@ function dashHero(actions){
   const first=(currentUser.name||'Trainer').split(' ')[0];
   return`<div class="dash-hero">
     <div class="dh-left">
-      <div class="dh-greet">${greet()}, <span>${first}</span> &#128075;</div>
+      <div class="dh-greet">${greet()}, <span>${first}</span> ${iconSvg('wave',18)}</div>
       <div class="dh-sub">${formatFullDate(today())} — here's what's happening at FitCore today.</div>
     </div>
     ${actions?`<div class="dh-actions">${actions}</div>`:''}
@@ -1383,32 +1386,40 @@ function viewReceipt(id){
   <div class="receipt">
     <div class="receipt-header">
       <div class="receipt-sticker">
-        <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <rect width="48" height="48" rx="12" fill="#7285ff"/>
+        <svg width="46" height="46" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect width="48" height="48" rx="12" fill="url(#rcGrad)"/>
           <rect x="8" y="21" width="7" height="6" rx="2" fill="white"/>
           <rect x="33" y="21" width="7" height="6" rx="2" fill="white"/>
           <rect x="13" y="17" width="5" height="14" rx="2" fill="white"/>
           <rect x="30" y="17" width="5" height="14" rx="2" fill="white"/>
           <rect x="18" y="22" width="12" height="4" rx="2" fill="white"/>
+          <defs><linearGradient id="rcGrad" x1="0" y1="0" x2="48" y2="48"><stop offset="0%" stop-color="#f4913f"/><stop offset="100%" stop-color="#d1621f"/></linearGradient></defs>
         </svg>
       </div>
       <h2>FITCORE <span>GMS</span></h2>
-      <div class="receipt-sub">Gym Management System &middot; ${isRenewal?'<span style="color:#fbbf24;font-weight:800">🔄 Membership Renewal Receipt</span>':'Official Receipt'}</div>
+      <div class="receipt-sub">Gym Management System</div>
+      <div class="receipt-tag ${isRenewal?'tag-renew':'tag-paid'}">${isRenewal?'🔄 Membership Renewal Receipt':'Official Receipt'}</div>
     </div>
-    ${isRenewal?`<div style="background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.3);border-radius:8px;padding:8px 14px;margin-bottom:10px;text-align:center;font-size:11px;font-weight:800;letter-spacing:1px;color:var(--gold)">🔄 RENEWAL PAYMENT</div>`:''}
-    <hr class="receipt-divider">
-    <div class="receipt-row"><span>Receipt No.</span><span>${p.id}</span></div>
-    <div class="receipt-row"><span>Member</span><span>${displayMemberName}</span></div>
-    <div class="receipt-row"><span>Member ID</span><span>${p.memberId}</span></div>
-    <hr class="receipt-divider">
-    <div class="receipt-row"><span>Membership Plan</span><span>${p.planName}</span></div>
-    <div class="receipt-row"><span>Payment Date</span><span>${formatDate(p.date)}</span></div>
-    <div class="receipt-row"><span>Payment Method</span><span>${p.method}</span></div>
-    <div class="receipt-row"><span>New Expiry Date</span><span>${formatDate(p.newExpiry)}</span></div>
-    <hr class="receipt-divider">
-    <div class="receipt-row total"><span>Amount Paid</span><span>&#8369;${Number(p.amount).toLocaleString()}</span></div>
-    <hr class="receipt-divider">
-    <div class="receipt-footer-note">Recorded by: ${staffDisplay} &middot; ${formatDateTime(p.createdAt)}</div>
+    <div class="receipt-meta">
+      <div><span>Receipt No.</span><strong>${p.id}</strong></div>
+      <div><span>Payment Date</span><strong>${formatDate(p.date)}</strong></div>
+    </div>
+    <div class="receipt-body">
+      <div class="receipt-row"><span>Member</span><strong>${displayMemberName}</strong></div>
+      <div class="receipt-row"><span>Member ID</span><strong>${p.memberId}</strong></div>
+      <div class="receipt-row"><span>Membership Plan</span><strong>${p.planName}</strong></div>
+      <div class="receipt-row"><span>Payment Method</span><strong>${p.method}</strong></div>
+      <div class="receipt-row"><span>New Expiry Date</span><strong>${formatDate(p.newExpiry)}</strong></div>
+    </div>
+    <div class="receipt-total">
+      <span>Amount Paid</span>
+      <strong>&#8369;${Number(p.amount).toLocaleString()}</strong>
+    </div>
+    <div class="receipt-foot">
+      <div class="receipt-footer-note">Recorded by <strong>${staffDisplay}</strong> &middot; ${formatDateTime(p.createdAt)}</div>
+      <div class="receipt-barcode" aria-hidden="true"></div>
+      <div class="receipt-thanks">Train hard &middot; Stay strong &middot; See you at FitCore</div>
+    </div>
   </div>`;
   openModal('receiptModal');
 }
@@ -2114,30 +2125,39 @@ function viewWalkinReceipt(id){
   <div class="receipt">
     <div class="receipt-header">
       <div class="receipt-sticker">
-        <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <rect width="48" height="48" rx="12" fill="#7285ff"/>
+        <svg width="46" height="46" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect width="48" height="48" rx="12" fill="url(#rcGrad)"/>
           <rect x="8" y="21" width="7" height="6" rx="2" fill="white"/>
           <rect x="33" y="21" width="7" height="6" rx="2" fill="white"/>
           <rect x="13" y="17" width="5" height="14" rx="2" fill="white"/>
           <rect x="30" y="17" width="5" height="14" rx="2" fill="white"/>
           <rect x="18" y="22" width="12" height="4" rx="2" fill="white"/>
+          <defs><linearGradient id="rcGrad" x1="0" y1="0" x2="48" y2="48"><stop offset="0%" stop-color="#f4913f"/><stop offset="100%" stop-color="#d1621f"/></linearGradient></defs>
         </svg>
       </div>
       <h2>FITCORE <span>GMS</span></h2>
-      <div class="receipt-sub">Gym Management System &middot; Walk-In Receipt</div>
+      <div class="receipt-sub">Gym Management System</div>
+      <div class="receipt-tag tag-walkin">🎟️ Walk-In Receipt</div>
     </div>
-    <hr class="receipt-divider">
-    <div class="receipt-row"><span>Receipt No.</span><span>${w.id}</span></div>
-    <div class="receipt-row"><span>Visitor Name</span><span>${w.visitorName}</span></div>
-    <div class="receipt-row"><span>Visit Type</span><span>Walk-In (Single Visit)</span></div>
-    <hr class="receipt-divider">
-    <div class="receipt-row"><span>Date</span><span>${formatDate(w.date)}</span></div>
-    <div class="receipt-row"><span>Time</span><span>${recordedTime}</span></div>
-    <div class="receipt-row"><span>Payment Method</span><span>Cash</span></div>
-    <hr class="receipt-divider">
-    <div class="receipt-row total"><span>Amount Paid</span><span>&#8369;${Number(w.fee).toLocaleString()}</span></div>
-    <hr class="receipt-divider">
-    <div class="receipt-footer-note">Recorded by: ${staffDisplay} &middot; ${formatDate(w.date)} ${recordedTime}</div>
+    <div class="receipt-meta">
+      <div><span>Receipt No.</span><strong>${w.id}</strong></div>
+      <div><span>Visit Date</span><strong>${formatDate(w.date)}</strong></div>
+    </div>
+    <div class="receipt-body">
+      <div class="receipt-row"><span>Visitor Name</span><strong>${w.visitorName}</strong></div>
+      <div class="receipt-row"><span>Visit Type</span><strong>Walk-In (Single Visit)</strong></div>
+      <div class="receipt-row"><span>Time In</span><strong>${recordedTime}</strong></div>
+      <div class="receipt-row"><span>Payment Method</span><strong>Cash</strong></div>
+    </div>
+    <div class="receipt-total">
+      <span>Amount Paid</span>
+      <strong>&#8369;${Number(w.fee).toLocaleString()}</strong>
+    </div>
+    <div class="receipt-foot">
+      <div class="receipt-footer-note">Recorded by <strong>${staffDisplay}</strong> &middot; ${formatDate(w.date)} ${recordedTime}</div>
+      <div class="receipt-barcode" aria-hidden="true"></div>
+      <div class="receipt-thanks">Train hard &middot; Stay strong &middot; See you at FitCore</div>
+    </div>
   </div>`;
   openModal('receiptModal');
 }
@@ -2433,11 +2453,19 @@ function renderReports(){
   </div>
   <div class="report-output" id="reportOutput"></div>`;
 }
+function reportDocHead(title,from,to){
+  const rangeLabel=from&&to?(from===to?formatDate(from):`${formatDate(from)} — ${formatDate(to)}`):(from||to?`${from||'…'} – ${to||'…'}`:'All time');
+  return `<div class="report-doc-head">
+    <div class="rdh-brand"><span class="rdh-logo">F</span><div><div class="rdh-name">FITCORE <em>GMS</em></div><div class="rdh-tag">Gym Management System</div></div></div>
+    <div class="rdh-right"><div class="rdh-title">${title}</div><div class="rdh-meta">${rangeLabel} &middot; Generated ${formatDateTime(new Date().toISOString())} by ${currentUser?currentUser.name:'—'}</div></div>
+  </div>`;
+}
 function generateReport(){
   const from=document.getElementById('rpt_from')?.value||'';
   const to=document.getElementById('rpt_to')?.value||today();
   const output=document.getElementById('reportOutput');
   output.classList.add('visible');
+  const docHead=reportDocHead({revenue:'Revenue Report',attendance:'Attendance Report',membership:'Membership Report',trainer:'Trainer Schedule Report',activity:'Activity Log Report'}[reportType]||'Report',from,to);
   if(reportType==='revenue'){
     let data=Payments.all();
     if(from)data=data.filter(p=>p.date>=from);
@@ -2449,7 +2477,7 @@ function generateReport(){
     if(from)walkins=walkins.filter(w=>w.date>=from);
     if(to)walkins=walkins.filter(w=>w.date<=to);
     const walkinRevenue=walkins.reduce((a,w)=>a+Number(w.fee),0);
-    if(!data.length&&!walkins.length){output.innerHTML=`<div class="empty-state"><div class="empty-icon">📊</div><p>No data found for the selected filters. Try adjusting the date range.</p></div>`;return;}
+    if(!data.length&&!walkins.length){output.innerHTML=docHead+`<div class="empty-state"><div class="empty-icon">📊</div><p>No data found for the selected filters. Try adjusting the date range.</p></div>`;return;}
     const memberRevenue=data.reduce((a,p)=>a+Number(p.amount),0);
     const total=memberRevenue+walkinRevenue;
     const avgAmount=data.length?memberRevenue/data.length:0;
@@ -2460,8 +2488,9 @@ function generateReport(){
     const months=Object.keys(byMonth).sort();
     const maxVal=Math.max(...Object.values(byMonth),1);
     const barW=50;const gap=16;const chartH=120;
-    const bars=months.map((m,i)=>{const v=byMonth[m];const bh=Math.max(4,(v/maxVal)*chartH);const x=i*(barW+gap)+10;const y=chartH-bh+20;return`<g><rect x="${x}" y="${y}" width="${barW}" height="${bh}" rx="4" fill="url(#repBarGrad)"/><text x="${x+barW/2}" y="${chartH+32}" text-anchor="middle" fill="#94a3b8" font-size="10">${m.slice(5)}</text><text x="${x+barW/2}" y="${y-4}" text-anchor="middle" fill="#7285ff" font-size="9">₱${v>=1000?(v/1000).toFixed(1)+'k':v}</text></g>`;}).join('');
+    const bars=months.map((m,i)=>{const v=byMonth[m];const bh=Math.max(4,(v/maxVal)*chartH);const x=i*(barW+gap)+10;const y=chartH-bh+20;return`<g><rect x="${x}" y="${y}" width="${barW}" height="${bh}" rx="5" fill="url(#repBarGrad)"/><rect x="${x}" y="${y}" width="${barW}" height="3" rx="1.5" fill="rgba(255,255,255,.35)"/><text x="${x+barW/2}" y="${chartH+32}" text-anchor="middle" fill="#94a3b8" font-size="10">${m.slice(5)}</text><text x="${x+barW/2}" y="${y-4}" text-anchor="middle" fill="#f4913f" font-size="9" font-weight="700">₱${v>=1000?(v/1000).toFixed(1)+'k':v}</text></g>`;}).join('');
     const svgW=Math.max(300,months.length*(barW+gap)+30);
+    const gridLines=[20,50,80,110,140].map(y=>`<line x1="10" y1="${y}" x2="${svgW-10}" y2="${y}" stroke="rgba(148,163,184,.12)" stroke-width="1"/>`).join('');
     const revUsers=Users.all();
     function revRecorderLabel(name){
       if(!name||name==='—')return'—';
@@ -2474,14 +2503,14 @@ function generateReport(){
     }
     const rows=data.slice().reverse().map(p=>`<tr><td>${p.id}</td><td>${p.memberName}</td><td>${p.planName}</td><td style="color:var(--green)">₱${Number(p.amount).toLocaleString()}</td><td>${formatDate(p.date)}</td><td>${p.method}</td><td>${revRecorderLabel(p.recordedBy)}</td><td><span class="badge badge-paid">Membership</span></td></tr>`).join('');
     const walkinRows=walkins.slice().reverse().map(w=>`<tr><td>${w.id}</td><td>${w.visitorName}</td><td>Walk-In</td><td style="color:var(--orange)">₱${Number(w.fee).toLocaleString()}</td><td>${formatDate(w.date)}</td><td>Cash</td><td>${revRecorderLabel(w.recordedBy)}</td><td><span class="badge badge-pending">Walk-In</span></td></tr>`).join('');
-    output.innerHTML=`
+    output.innerHTML=docHead+`
     <div class="stats-grid">
       <div class="stat-card orange"><div class="stat-label">Total Revenue</div><div class="stat-value" style="font-size:22px">₱${total.toLocaleString()}</div><div class="stat-hint">Memberships + Walk-Ins</div></div>
       <div class="stat-card green"><div class="stat-label">Membership Revenue</div><div class="stat-value" style="font-size:22px">₱${memberRevenue.toLocaleString()}</div></div>
       <div class="stat-card blue" style="border-left-color:#fbbf24"><div class="stat-label">Walk-In Revenue</div><div class="stat-value" style="font-size:22px">₱${walkinRevenue.toLocaleString()}</div><div class="stat-hint">${walkins.length} visits × ₱100</div></div>
       <div class="stat-card gold"><div class="stat-label">Avg Transaction</div><div class="stat-value" style="font-size:22px">₱${avgAmount.toFixed(0)}</div></div>
     </div>
-    ${months.length?`<div class="chart-card" style="margin-bottom:20px"><div class="chart-title">Combined Revenue by Month</div><svg viewBox="0 0 ${svgW} 160" style="height:160px"><defs><linearGradient id="repBarGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#7285ff"/><stop offset="100%" stop-color="#fbbf24"/></linearGradient></defs>${bars}</svg></div>`:''}
+    ${months.length?`<div class="chart-card" style="margin-bottom:20px"><div class="chart-title">Combined Revenue by Month</div><svg viewBox="0 0 ${svgW} 160" style="height:160px"><defs><linearGradient id="repBarGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f4913f"/><stop offset="100%" stop-color="#d1621f"/></linearGradient></defs>${gridLines}${bars}</svg></div>`:''}
     <div class="table-card">
       <div class="table-header"><h3>Revenue Records</h3><div style="display:flex;gap:8px"><button class="btn-secondary btn-sm" onclick="printReport()">🖨️ Print</button><button class="btn-secondary btn-sm" onclick="exportCSV('revenue')">📥 Export CSV</button></div></div>
       <div style="overflow-x:auto"><table><thead><tr><th>ID</th><th>Name</th><th>Plan / Type</th><th>Amount</th><th>Date</th><th>Method</th><th>Recorded By</th><th>Type</th></tr></thead><tbody>${rows}${walkinRows}</tbody></table></div>
@@ -2495,7 +2524,7 @@ function generateReport(){
       const tSessions=Sessions.all().filter(s=>s.trainerId===trainerFilter).map(s=>s.memberId);
       data=data.filter(a=>tSessions.includes(a.memberId));
     }
-    if(!data.length){output.innerHTML=`<div class="empty-state"><div class="empty-icon">📊</div><p>No data found for the selected filters. Try adjusting the date range.</p></div>`;return;}
+    if(!data.length){output.innerHTML=docHead+`<div class="empty-state"><div class="empty-icon">📊</div><p>No data found for the selected filters. Try adjusting the date range.</p></div>`;return;}
     const checkedIn=data.filter(a=>a.checkIn&&!a.checkOut).length;
     const completed=data.filter(a=>a.checkOut).length;
     const users=Users.all();
@@ -2509,7 +2538,7 @@ function generateReport(){
       return`${u.name} <span style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;background:rgba(255,255,255,.07);color:${col};margin-left:4px">${tag}</span>`;
     }
     const rows=data.slice().reverse().map(a=>{const m=Members.all().find(x=>x.id===a.memberId);return`<tr><td>${formatDate(a.date)}</td><td>${a.checkIn||a.time||'—'}</td><td>${a.checkOut||'<span style="color:var(--gold)">In Gym</span>'}</td><td>${a.duration||'—'}</td><td>${m?m.name:'Unknown'}</td><td>${recorderLabel(a.recordedBy)}</td></tr>`;}).join('');
-    output.innerHTML=`
+    output.innerHTML=docHead+`
     <div class="stats-grid">
       <div class="stat-card orange"><div class="stat-label">Total Check-Ins</div><div class="stat-value">${data.length}</div></div>
       <div class="stat-card green"><div class="stat-label">Completed</div><div class="stat-value">${completed}</div><div class="stat-hint">Checked out</div></div>
@@ -2528,7 +2557,7 @@ function generateReport(){
     if(to)sessions=sessions.filter(s=>s.date<=to);
     const trainerFil=document.getElementById('rpt_trainer_filter')?.value||'all';
     if(trainerFil!=='all')sessions=sessions.filter(s=>s.trainerId===trainerFil);
-    if(!sessions.length){output.innerHTML=`<div class="empty-state"><div class="empty-icon">📊</div><p>No trainer schedule data found for the selected filters.</p></div>`;return;}
+    if(!sessions.length){output.innerHTML=docHead+`<div class="empty-state"><div class="empty-icon">📊</div><p>No trainer schedule data found for the selected filters.</p></div>`;return;}
     const totalSessions=sessions.length;
     const uniqueTrainers=trainerFil!=='all'?1:[...new Set(sessions.map(s=>s.trainerId))].length;
     const uniqueMembers=[...new Set(sessions.map(s=>s.memberId).filter(Boolean))].length;
@@ -2562,7 +2591,7 @@ function generateReport(){
     }).join('');
     const trainerFil2=document.getElementById('rpt_trainer_filter')?.value||'all';
     const singleTrainer=trainerFil2!=='all'?allUsers.find(u=>u.id===trainerFil2):null;
-    output.innerHTML=`
+    output.innerHTML=docHead+`
     <div class="stats-grid">
       <div class="stat-card orange"><div class="stat-label">Total Sessions</div><div class="stat-value">${totalSessions}</div>${singleTrainer?`<div class="stat-hint">${singleTrainer.name}</div>`:''}</div>
       <div class="stat-card green"><div class="stat-label">Completed</div><div class="stat-value">${statusCounts.Completed}</div></div>
@@ -2592,7 +2621,7 @@ function generateReport(){
     const totalEdited=log.filter(e=>e.action==='Edited').length;
     const totalDeleted=log.filter(e=>e.action==='Deleted').length;
     const totalStatus=log.filter(e=>e.action==='Status Changed').length;
-    if(!log.length){output.innerHTML=`<div class="empty-state"><div class="empty-icon">📝</div><p>No activity recorded yet. Actions like adding, editing, or deleting members and sessions will appear here.</p></div>`;return;}
+    if(!log.length){output.innerHTML=docHead+`<div class="empty-state"><div class="empty-icon">📝</div><p>No activity recorded yet. Actions like adding, editing, or deleting members and sessions will appear here.</p></div>`;return;}
     const rows=log.map(e=>{
       const clr=actionColor[e.action]||'var(--gray-300)';
       const bg=actionBg[e.action]||'rgba(255,255,255,.05)';
@@ -2608,7 +2637,7 @@ function generateReport(){
         <td><div style="font-size:12px;font-weight:700;color:var(--white)">${e.by||'—'} <span style="font-size:9px;font-weight:800;padding:2px 7px;border-radius:4px;background:rgba(255,255,255,.09);color:${roleClr};margin-left:3px;text-transform:uppercase">${e.byRole||''}</span></div></td>
         <td style="white-space:nowrap"><div style="font-size:12px;color:var(--white);font-weight:700">${dateStr}</div><div style="font-size:11px;color:var(--gray-300);margin-top:2px">🕐 ${timeStr}</div></td>
       </tr>`;}).join('');
-    output.innerHTML=`
+    output.innerHTML=docHead+`
     <div class="stats-grid">
       <div class="stat-card green"><div class="stat-label">Added</div><div class="stat-value">${totalAdded}</div></div>
       <div class="stat-card gold"><div class="stat-label">Edited</div><div class="stat-value">${totalEdited}</div></div>
@@ -2637,7 +2666,7 @@ function generateReport(){
       singleMemberMode=true;
       singleMember=foundInAll||null;
     }
-    if(!filtered.length){output.innerHTML=`<div class="empty-state"><div class="empty-icon">📊</div><p>No data found for the selected filters. Try adjusting the date range.</p></div>`;return;}
+    if(!filtered.length){output.innerHTML=docHead+`<div class="empty-state"><div class="empty-icon">📊</div><p>No data found for the selected filters. Try adjusting the date range.</p></div>`;return;}
     const active=filtered.filter(m=>m.status==='Active'||m.status==='Expiring Soon').length;
     const expired=filtered.filter(m=>m.status==='Expired').length;
     const archivedCount=filtered.filter(m=>m.status==='Archived').length;
@@ -2672,7 +2701,7 @@ function generateReport(){
         <div style="overflow-x:auto"><table><thead><tr><th>Pay ID</th><th>Plan</th><th>Amount</th><th>Date</th><th>New Expiry</th><th>Method</th><th>Recorded By</th></tr></thead><tbody>${payRows}</tbody></table></div>
       </div>`;
     }
-    output.innerHTML=`
+    output.innerHTML=docHead+`
     <div class="stats-grid">
       <div class="stat-card orange"><div class="stat-label">Total Members</div><div class="stat-value">${filtered.length}</div></div>
       <div class="stat-card green"><div class="stat-label">Active</div><div class="stat-value">${active}</div></div>
@@ -2748,148 +2777,66 @@ function printReport(){
   if(!output||!output.innerHTML.trim()){toast('Generate a report first.','error');return;}
   const win=window.open('','_blank','width=900,height=700');
   win.document.write(`<!DOCTYPE html><html><head><title>FitCore GMS — Report</title>
-  <style>body{font-family:Arial,sans-serif;color:#222;padding:20px;font-size:13px}
-  h1{font-size:20px;margin-bottom:4px}
-  .print-header{border-bottom:2px solid #7285ff;padding-bottom:10px;margin-bottom:16px}
-  table{width:100%;border-collapse:collapse;margin-top:12px}
-  th{background:#f4f4f4;padding:8px 10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid #ddd}
-  td{padding:7px 10px;border-bottom:1px solid #eee;font-size:12px}
-  .stats-grid{display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap}
-  .stat-card{border:1px solid #eee;border-radius:8px;padding:12px 16px;min-width:120px;border-top:3px solid #7285ff}
-  .stat-label{font-size:10px;font-weight:700;text-transform:uppercase;color:#888;margin-bottom:4px}
-  .stat-value{font-size:24px;font-weight:900;color:#333}
-  .stat-hint{font-size:11px;color:#888;margin-top:2px}
-  .badge{display:inline-block;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
-  .badge-active{background:#d1fae5;color:#065f46}
-  .badge-expired{background:#fee2e2;color:#991b1b}
+  <style>
+  :root{--orange:#f4913f;--orange-dark:#d1621f;--gold:#fbbf24;--green:#16a34a;--gray-300:#94a3b8;--gray-500:#64748b;--navy-900:#0d1117;--cyan:#0891b2}
+  *{box-sizing:border-box}
+  body{font-family:'Segoe UI',Roboto,Arial,sans-serif;color:#0d1117;padding:0;margin:0;font-size:12.5px;background:#fff}
+  .page{max-width:920px;margin:0 auto;padding:28px 32px}
+  .print-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:14px;border-bottom:3px solid #f4913f;margin-bottom:18px}
+  .ph-brand{display:flex;align-items:center;gap:10px}
+  .ph-logo{width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,#f4913f,#d1621f);color:#fff;font-family:Impact,'Arial Black',sans-serif;font-size:21px;font-weight:900;display:flex;align-items:center;justify-content:center}
+  .ph-name{font-family:Impact,'Arial Black',sans-serif;font-size:17px;font-weight:900;letter-spacing:2px;text-transform:uppercase;color:#0d1117;line-height:1.1}
+  .ph-name em{font-style:normal;color:#f4913f}
+  .ph-tag{font-size:8.5px;font-weight:800;text-transform:uppercase;letter-spacing:2px;color:#64748b;margin-top:2px}
+  .ph-meta{text-align:right;font-size:10.5px;color:#64748b;line-height:1.6}
+  .ph-meta strong{color:#0d1117}
+  .stats-grid{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+  .stat-card{border:1px solid #e6ebf4;border-radius:12px;padding:12px 16px;min-width:130px;border-top:3px solid #f4913f}
+  .stat-card.green{border-top-color:#16a34a}
+  .stat-card.gold{border-top-color:#fbbf24}
+  .stat-card.blue{border-top-color:#0ea5e9}
+  .stat-label{font-size:9px;font-weight:800;text-transform:uppercase;color:#64748b;margin-bottom:4px;letter-spacing:1px}
+  .stat-value{font-size:23px;font-weight:900;color:#0d1117;font-family:Impact,'Arial Black',sans-serif}
+  .stat-hint{font-size:10px;color:#64748b;margin-top:3px}
+  .chart-card{border:1px solid #e6ebf4;border-radius:12px;padding:14px 16px;margin-bottom:16px}
+  .chart-title{font-size:9px;font-weight:800;text-transform:uppercase;color:#64748b;margin-bottom:10px;letter-spacing:1.5px}
+  .chart-card svg{width:100%}
+  .table-card{border:1px solid #e6ebf4;border-radius:12px;overflow:hidden;margin-bottom:14px}
+  .table-header{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 16px;background:#f6f8fc;border-bottom:1px solid #e6ebf4}
+  .table-header h3{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:#0d1117;margin:0}
+  .table-header .btn-secondary,.table-header button{display:none}
+  table{width:100%;border-collapse:collapse;font-size:11.5px}
+  thead th{background:#0d1117;color:#fff;padding:8px 10px;text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.5px}
+  tbody td{padding:7px 10px;border-bottom:1px solid #eef1f6;vertical-align:middle}
+  tbody tr:nth-child(even){background:#fafbfd}
+  .badge{display:inline-block;padding:2px 8px;border-radius:100px;font-size:9.5px;font-weight:800;text-transform:uppercase}
+  .badge-active,.badge-paid{background:#dcfce7;color:#166534}
+  .badge-expired,.badge-locked{background:#fee2e2;color:#991b1b}
   .badge-pending{background:#fef3c7;color:#92400e}
-  .badge-paid{background:#d1fae5;color:#065f46}
-  @media print{button{display:none}}
-  </style></head><body>
+  .badge-expiring{background:#fde68a;color:#92400e}
+  .badge-suspended{background:#fecaca;color:#991b1b}
+  .badge-archived{background:#e2e8f0;color:#475569}
+  .report-doc-head{display:none}
+  .empty-state{text-align:center;padding:36px 16px;color:#64748b;font-size:12px}
+  .print-foot{margin-top:18px;padding-top:12px;border-top:1px solid #e6ebf4;display:flex;justify-content:space-between;gap:12px;font-size:10px;color:#64748b}
+  .print-foot strong{color:#0d1117}
+  @media print{button{display:none}thead th{-webkit-print-color-adjust:exact;print-color-adjust:exact}tbody tr:nth-child(even){-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+  </style></head><body><div class="page">
   <div class="print-header">
-    <h1>FIT<span style="color:#7285ff">CORE</span> GMS — Report</h1>
-    <div style="font-size:12px;color:#666">Generated: ${new Date().toLocaleString()} &nbsp;|&nbsp; By: ${currentUser.name} (${currentUser.role})</div>
+    <div class="ph-brand">
+      <div class="ph-logo">F</div>
+      <div><div class="ph-name">FITCORE <em>GMS</em></div><div class="ph-tag">Gym Management System</div></div>
+    </div>
+    <div class="ph-meta"><strong>Generated</strong>: ${new Date().toLocaleString()}<br><strong>By</strong>: ${currentUser.name} (${currentUser.role})</div>
   </div>
   ${output.innerHTML}
+  <div class="print-foot">
+    <div><strong>FitCore GMS</strong> &mdash; Gym Management System</div>
+    <div>Printed ${new Date().toLocaleString()}</div>
+  </div>
+  </div>
   <script>window.onload=function(){window.print();}<\/script>
   </body>
-<!-- Trainer Edit Profile Modal -->
-<div class="modal-overlay" id="trainerEditProfileModal">
-  <div class="modal modal-lg" style="max-height:92vh">
-    <div class="modal-head">
-      <h2>&#9998; Edit My Profile</h2>
-      <button class="modal-close" onclick="closeModal('trainerEditProfileModal')">&#10005;</button>
-    </div>
-    <div class="modal-body" style="overflow-y:auto">
-      <div id="tepError" class="error-msg"></div>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
-        <div class="form-group">
-          <label>Full Name *</label>
-          <input type="text" id="tep_fullname" placeholder="Your legal full name">
-        </div>
-        <div class="form-group">
-          <label>Coach / Display Name</label>
-          <input type="text" id="tep_coachname" placeholder="e.g. Coach Ryan">
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label>Specializations <span style="font-size:10px;color:var(--gray-500)">(What you're best at)</span></label>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-top:6px" id="tep_specs">
-          <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s">
-            <input type="checkbox" value="Personal Training" style="accent-color:var(--orange);width:14px;height:14px"> Personal Training
-          </label>
-          <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s">
-            <input type="checkbox" value="Strength Training" style="accent-color:var(--orange);width:14px;height:14px"> Strength Training
-          </label>
-          <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s">
-            <input type="checkbox" value="Cardio" style="accent-color:var(--orange);width:14px;height:14px"> Cardio
-          </label>
-          <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s">
-            <input type="checkbox" value="Yoga" style="accent-color:var(--orange);width:14px;height:14px"> Yoga
-          </label>
-          <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s">
-            <input type="checkbox" value="Zumba" style="accent-color:var(--orange);width:14px;height:14px"> Zumba
-          </label>
-          <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s">
-            <input type="checkbox" value="HIIT" style="accent-color:var(--orange);width:14px;height:14px"> HIIT
-          </label>
-          <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s">
-            <input type="checkbox" value="Flexibility" style="accent-color:var(--orange);width:14px;height:14px"> Flexibility
-          </label>
-          <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s">
-            <input type="checkbox" value="CrossFit" style="accent-color:var(--orange);width:14px;height:14px"> CrossFit
-          </label>
-          <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s">
-            <input type="checkbox" value="Body Building" style="accent-color:var(--orange);width:14px;height:14px"> Body Building
-          </label>
-          <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s">
-            <input type="checkbox" value="Muay Thai" style="accent-color:var(--orange);width:14px;height:14px"> Muay Thai
-          </label>
-          <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s">
-            <input type="checkbox" value="Boxing" style="accent-color:var(--orange);width:14px;height:14px"> Boxing
-          </label>
-          <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:7px;padding:8px 10px;transition:.2s">
-            <input type="checkbox" value="Pilates" style="accent-color:var(--orange);width:14px;height:14px"> Pilates
-          </label>
-        </div>
-      </div>
-
-      <div class="form-group" style="margin-top:4px">
-        <label>Availability</label>
-        <div style="font-size:10px;color:var(--gray-500);margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:1px">Days</div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px" id="tep_days">
-          <label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:6px;padding:6px 12px;transition:.2s"><input type="checkbox" value="Mon" style="accent-color:var(--orange)"> Mon</label>
-          <label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:6px;padding:6px 12px;transition:.2s"><input type="checkbox" value="Tue" style="accent-color:var(--orange)"> Tue</label>
-          <label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:6px;padding:6px 12px;transition:.2s"><input type="checkbox" value="Wed" style="accent-color:var(--orange)"> Wed</label>
-          <label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:6px;padding:6px 12px;transition:.2s"><input type="checkbox" value="Thu" style="accent-color:var(--orange)"> Thu</label>
-          <label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:6px;padding:6px 12px;transition:.2s"><input type="checkbox" value="Fri" style="accent-color:var(--orange)"> Fri</label>
-          <label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:6px;padding:6px 12px;transition:.2s"><input type="checkbox" value="Sat" style="accent-color:var(--orange)"> Sat</label>
-          <label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--gray-100);cursor:pointer;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:6px;padding:6px 12px;transition:.2s"><input type="checkbox" value="Sun" style="accent-color:var(--orange)"> Sun</label>
-        </div>
-        <div style="font-size:10px;color:var(--gray-500);margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:1px">Available Hours</div>
-        <div style="display:flex;align-items:center;gap:12px">
-          <div style="flex:1">
-            <div style="font-size:10px;color:var(--gray-500);margin-bottom:4px">From</div>
-            <select id="tep_from" style="width:100%;padding:9px 10px;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:8px;color:var(--white);outline:none;font-size:13px">
-              <option value="">-- Start</option>
-              <option>5:00 AM</option><option>6:00 AM</option><option>7:00 AM</option>
-              <option>8:00 AM</option><option>9:00 AM</option><option>10:00 AM</option>
-              <option>11:00 AM</option><option>12:00 PM</option><option>1:00 PM</option>
-              <option>2:00 PM</option><option>3:00 PM</option><option>4:00 PM</option>
-              <option>5:00 PM</option><option>6:00 PM</option><option>7:00 PM</option>
-              <option>8:00 PM</option>
-            </select>
-          </div>
-          <div style="color:var(--gray-500);font-size:20px;padding-top:16px">&ndash;</div>
-          <div style="flex:1">
-            <div style="font-size:10px;color:var(--gray-500);margin-bottom:4px">To</div>
-            <select id="tep_to" style="width:100%;padding:9px 10px;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:8px;color:var(--white);outline:none;font-size:13px">
-              <option value="">-- End</option>
-              <option>6:00 AM</option><option>7:00 AM</option><option>8:00 AM</option>
-              <option>9:00 AM</option><option>10:00 AM</option><option>11:00 AM</option>
-              <option>12:00 PM</option><option>1:00 PM</option><option>2:00 PM</option>
-              <option>3:00 PM</option><option>4:00 PM</option><option>5:00 PM</option>
-              <option>6:00 PM</option><option>7:00 PM</option><option>8:00 PM</option>
-              <option>9:00 PM</option><option>10:00 PM</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label>Bio / Short Description</label>
-        <textarea id="tep_bio" rows="3" placeholder="Tell members about your training style, experience, certifications&#8230;" style="resize:vertical;min-height:72px"></textarea>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-secondary" onclick="closeModal('trainerEditProfileModal')">Cancel</button>
-      <button class="btn-primary" onclick="saveTrainerProfile()">&#10003; Save Profile</button>
-    </div>
-  </div>
-</div>
-
 </html>`);
   win.document.close();
 }
@@ -3299,57 +3246,57 @@ document.addEventListener('click',function(e){
 // COUNTRY PHONE PICKER
 // ======================================================================
 const COUNTRIES=[
-  {flag:'🇵🇭',name:'Philippines',code:'+63'},
-  {flag:'🇺🇸',name:'United States',code:'+1'},
-  {flag:'🇬🇧',name:'United Kingdom',code:'+44'},
-  {flag:'🇦🇺',name:'Australia',code:'+61'},
-  {flag:'🇨🇦',name:'Canada',code:'+1'},
-  {flag:'🇯🇵',name:'Japan',code:'+81'},
-  {flag:'🇰🇷',name:'South Korea',code:'+82'},
-  {flag:'🇨🇳',name:'China',code:'+86'},
-  {flag:'🇮🇳',name:'India',code:'+91'},
-  {flag:'🇸🇬',name:'Singapore',code:'+65'},
-  {flag:'🇲🇾',name:'Malaysia',code:'+60'},
-  {flag:'🇮🇩',name:'Indonesia',code:'+62'},
-  {flag:'🇹🇭',name:'Thailand',code:'+66'},
-  {flag:'🇻🇳',name:'Vietnam',code:'+84'},
-  {flag:'🇭🇰',name:'Hong Kong',code:'+852'},
-  {flag:'🇹🇼',name:'Taiwan',code:'+886'},
-  {flag:'🇳🇿',name:'New Zealand',code:'+64'},
-  {flag:'🇦🇪',name:'UAE',code:'+971'},
-  {flag:'🇸🇦',name:'Saudi Arabia',code:'+966'},
-  {flag:'🇶🇦',name:'Qatar',code:'+974'},
-  {flag:'🇧🇭',name:'Bahrain',code:'+973'},
-  {flag:'🇰🇼',name:'Kuwait',code:'+965'},
-  {flag:'🇴🇲',name:'Oman',code:'+968'},
-  {flag:'🇩🇪',name:'Germany',code:'+49'},
-  {flag:'🇫🇷',name:'France',code:'+33'},
-  {flag:'🇮🇹',name:'Italy',code:'+39'},
-  {flag:'🇪🇸',name:'Spain',code:'+34'},
-  {flag:'🇵🇹',name:'Portugal',code:'+351'},
-  {flag:'🇳🇱',name:'Netherlands',code:'+31'},
-  {flag:'🇧🇪',name:'Belgium',code:'+32'},
-  {flag:'🇨🇭',name:'Switzerland',code:'+41'},
-  {flag:'🇸🇪',name:'Sweden',code:'+46'},
-  {flag:'🇳🇴',name:'Norway',code:'+47'},
-  {flag:'🇩🇰',name:'Denmark',code:'+45'},
-  {flag:'🇫🇮',name:'Finland',code:'+358'},
-  {flag:'🇷🇺',name:'Russia',code:'+7'},
-  {flag:'🇧🇷',name:'Brazil',code:'+55'},
-  {flag:'🇲🇽',name:'Mexico',code:'+52'},
-  {flag:'🇦🇷',name:'Argentina',code:'+54'},
-  {flag:'🇿🇦',name:'South Africa',code:'+27'},
-  {flag:'🇳🇬',name:'Nigeria',code:'+234'},
-  {flag:'🇰🇪',name:'Kenya',code:'+254'},
-  {flag:'🇬🇭',name:'Ghana',code:'+233'},
-  {flag:'🇵🇰',name:'Pakistan',code:'+92'},
-  {flag:'🇧🇩',name:'Bangladesh',code:'+880'},
-  {flag:'🇱🇰',name:'Sri Lanka',code:'+94'},
-  {flag:'🇳🇵',name:'Nepal',code:'+977'},
-  {flag:'🇲🇲',name:'Myanmar',code:'+95'},
-  {flag:'🇰🇭',name:'Cambodia',code:'+855'},
-  {flag:'🇧🇳',name:'Brunei',code:'+673'},
-  {flag:'🇵🇬',name:'Papua New Guinea',code:'+675'},
+  {flag:'PH',name:'Philippines',code:'+63'},
+  {flag:'US',name:'United States',code:'+1'},
+  {flag:'GB',name:'United Kingdom',code:'+44'},
+  {flag:'AU',name:'Australia',code:'+61'},
+  {flag:'CA',name:'Canada',code:'+1'},
+  {flag:'JP',name:'Japan',code:'+81'},
+  {flag:'KR',name:'South Korea',code:'+82'},
+  {flag:'CN',name:'China',code:'+86'},
+  {flag:'IN',name:'India',code:'+91'},
+  {flag:'SG',name:'Singapore',code:'+65'},
+  {flag:'MY',name:'Malaysia',code:'+60'},
+  {flag:'ID',name:'Indonesia',code:'+62'},
+  {flag:'TH',name:'Thailand',code:'+66'},
+  {flag:'VN',name:'Vietnam',code:'+84'},
+  {flag:'HK',name:'Hong Kong',code:'+852'},
+  {flag:'TW',name:'Taiwan',code:'+886'},
+  {flag:'NZ',name:'New Zealand',code:'+64'},
+  {flag:'AE',name:'UAE',code:'+971'},
+  {flag:'SA',name:'Saudi Arabia',code:'+966'},
+  {flag:'QA',name:'Qatar',code:'+974'},
+  {flag:'BH',name:'Bahrain',code:'+973'},
+  {flag:'KW',name:'Kuwait',code:'+965'},
+  {flag:'OM',name:'Oman',code:'+968'},
+  {flag:'DE',name:'Germany',code:'+49'},
+  {flag:'FR',name:'France',code:'+33'},
+  {flag:'IT',name:'Italy',code:'+39'},
+  {flag:'ES',name:'Spain',code:'+34'},
+  {flag:'PT',name:'Portugal',code:'+351'},
+  {flag:'NL',name:'Netherlands',code:'+31'},
+  {flag:'BE',name:'Belgium',code:'+32'},
+  {flag:'CH',name:'Switzerland',code:'+41'},
+  {flag:'SE',name:'Sweden',code:'+46'},
+  {flag:'NO',name:'Norway',code:'+47'},
+  {flag:'DK',name:'Denmark',code:'+45'},
+  {flag:'FI',name:'Finland',code:'+358'},
+  {flag:'RU',name:'Russia',code:'+7'},
+  {flag:'BR',name:'Brazil',code:'+55'},
+  {flag:'MX',name:'Mexico',code:'+52'},
+  {flag:'AR',name:'Argentina',code:'+54'},
+  {flag:'ZA',name:'South Africa',code:'+27'},
+  {flag:'NG',name:'Nigeria',code:'+234'},
+  {flag:'KE',name:'Kenya',code:'+254'},
+  {flag:'GH',name:'Ghana',code:'+233'},
+  {flag:'PK',name:'Pakistan',code:'+92'},
+  {flag:'BD',name:'Bangladesh',code:'+880'},
+  {flag:'LK',name:'Sri Lanka',code:'+94'},
+  {flag:'NP',name:'Nepal',code:'+977'},
+  {flag:'MM',name:'Myanmar',code:'+95'},
+  {flag:'KH',name:'Cambodia',code:'+855'},
+  {flag:'BN',name:'Brunei',code:'+673'},
+  {flag:'PG',name:'Papua New Guinea',code:'+675'},
 ];
 let selectedCountry=COUNTRIES[0];
 function renderCountryList(filter=''){
