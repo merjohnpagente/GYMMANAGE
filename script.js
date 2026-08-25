@@ -145,9 +145,15 @@ class AuthService{
     if(found&&found.status==='pending')return{ok:false,error:'Your account is pending admin approval. Please wait.'};
     // ---------- ONLINE (Firebase Auth) ----------
     if(window.GMSFB&&GMSFB.enabled){
+      // Give the first Firestore snapshot a moment to arrive so this login is
+      // validated against the CLOUD user list, not a possibly-empty local
+      // cache (prevents a device from silently falling back to local accounts).
+      if(GMSFB._lastCloud&&GMSFB._lastCloud.users===undefined&&typeof GMSFB.waitForSnap==='function'){
+        await GMSFB.waitForSnap('users',2500);
+      }
       if(found){
         const r=await GMSFB.signIn(GMSFB.authEmailFor(found),password);
-        if(r.ok){LoginAttempts.reset(username);this.setSession(found);return{ok:true,user:found};}
+        if(r.ok){LoginAttempts.reset(username);if(found.role==='admin')GMSFB.ensureSeededPlans();this.setSession(found);return{ok:true,user:found};}
         LoginAttempts.register(username);
         return{ok:false,error:r.error};
       }
@@ -165,52 +171,41 @@ class AuthService{
         return{ok:false,error:r.error};
       }
       LoginAttempts.register(username);
-      // Built-in admin (admin/admin123): wait for the auto-seed, and if the
-      // profile doc never landed (e.g. rules were missing at first boot),
-      // authenticate directly and self-heal the document.
+      // Built-in admin: the AUTH account lives in Firebase Authentication
+      // (admin@fitcoregym.local). If it has never been created, the FIRST
+      // admin login bootstraps it in the cloud with the password entered,
+      // then self-heals the Firestore profile doc. From then on every device
+      // authenticates the same cloud admin — never a device-local copy.
       if(username.toLowerCase()==='admin'){
-        const ready=await GMSFB.ensureAdminReady();
-        let admin=ready?Users.all().find(x=>x.role==='admin'&&x.username.toLowerCase()==='admin'):null;
+        let admin=Users.all().find(x=>x.role==='admin'&&x.username.toLowerCase()==='admin');
         let r=admin?await GMSFB.signIn(GMSFB.authEmailFor(admin),password):await GMSFB.signIn(GMSFB.adminAuthEmail,password);
+        // First-run bootstrap: create the admin identity in Firebase Auth
+        // (only when it genuinely does not exist yet).
+        if(!r.ok&&!admin){
+          const notFound=r.code==='auth/user-not-found'||(r.code&&r.code.indexOf('user-not-found')>-1)||(r.code&&r.code.indexOf('invalid-credential')>-1);
+          if(notFound){
+            const cu=await GMSFB.createUserCreds(GMSFB.adminAuthEmail,password);
+            GMSFB.secondarySignOut();
+            if(cu.ok)r=await GMSFB.signIn(GMSFB.adminAuthEmail,password);
+          }
+        }
         if(r.ok){
           if(!admin){
             admin={id:'u1',name:'System Admin',username:'admin',authEmail:GMSFB.adminAuthEmail,role:'admin',status:'active',contact:'09150435696',createdAt:today()};
             Users.add(admin);
           }
           LoginAttempts.reset(username);
+          GMSFB.ensureSeededPlans();
           this.setSession(admin);
           return{ok:true,user:admin};
         }
       }
       return{ok:false,error:'Invalid username or password.'};
     }
-    // ---------- OFFLINE fallback (local hashes) ----------
-    if(found){
-      const ok=found.passwordHash?verifyPassword(password,found.passwordHash):(typeof found.password==='string'&&found.password===password);
-      if(ok){
-        // Upgrade legacy plaintext passwords to salted hashes on successful login
-        if(!found.passwordHash){found.passwordHash=hashPassword(password);delete found.password;Users.save(Users.all());}
-        else if(found.passwordHash.startsWith('h1$')){Users.update(found.id,{passwordHash:hashPassword(password)});}
-        LoginAttempts.reset(username);
-        this.setSession(found);
-        return{ok:true,user:found};
-      }
-      const attempts=LoginAttempts.register(username);
-      return{ok:false,error:attempts>=LOGIN_MAX_ATTEMPTS?'Account locked. Too many failed attempts — try again in 15 minutes.':'Invalid username or password.'};
-    }
-    // Member accounts live in the Members table and log in with username + password
-    const member=Members.all().find(m=>m.username&&m.username.toLowerCase()===username.toLowerCase());
-    if(member&&verifyPassword(password,member.passwordHash)){
-      if(member.status==='Archived')return{ok:false,error:'Your account has been archived. Please contact the front desk.'};
-      // Upgrade legacy h1$ (FNV) hashes to salted SHA-256 on successful login
-      if(member.passwordHash&&member.passwordHash.startsWith('h1$'))Members.update(member.id,{passwordHash:hashPassword(password)});
-      LoginAttempts.reset(username);
-      const sess={id:member.id,email:member.email||'',username:member.username,name:member.name,contact:member.contact,role:'member',memberId:member.id,status:member.status};
-      this.setSession(sess);
-      return{ok:true,user:sess};
-    }
-    const attempts=LoginAttempts.register(username);
-    return{ok:false,error:attempts>=LOGIN_MAX_ATTEMPTS?'Account locked. Too many failed attempts — try again in 15 minutes.':'Invalid username or password.'};
+    // ---------- ONLINE-ONLY ----------
+    // There is no offline/local fallback anymore: every account lives in
+    // Firebase. Without a cloud connection nobody can log in.
+    return{ok:false,error:'No internet connection. FitCore runs live in the cloud — please connect to the internet and try again.'};
   }
   logout(){this.clearSession();}
   async register(role,payload){
@@ -235,12 +230,22 @@ class AuthService{
       }
       user.authEmail=authEmail;
       // Guaranteed cloud write via the secondary app's authenticated context
-      await GMSFB.secSetDoc('users',user);
+      const wr=await GMSFB.secSetDoc('users',user);
+      GMSFB.secondarySignOut();
+      if(!wr||!wr.ok){
+        // NEVER keep a cloud-bound registration as a local-only record — it
+        // would be invisible to admins on other devices. Fail loudly instead.
+        return{ok:false,error:'Registration could not reach the server. Please check your internet connection and try again.'};
+      }
       // Authenticate the default app so the local cache push also passes rules
       const wasSignedIn=!!GMSFB.auth.currentUser;
       const si=await GMSFB.signIn(authEmail,password);
       if(si.ok)needSignOut=!wasSignedIn;
-    } else if(password){user.passwordHash=hashPassword(password);}
+    } else {
+      // ONLINE-ONLY: never fall back to a device-local account.
+      if(window.GMSFB&&GMSFB.secondarySignOut)GMSFB.secondarySignOut();
+      return{ok:false,error:'Registration requires an internet connection. Please connect to the internet and try again.'};
+    }
     Users.add(user);
     if(needSignOut)GMSFB.signOut();
     return{ok:true,user};
@@ -849,6 +854,7 @@ async function submitMemberSignup(){
   if(window.GMSFB&&GMSFB.enabled){
     await GMSFB.secSetDoc('members',member);
     if(notif)await GMSFB.secSetDoc('notifications',notif);
+    GMSFB.secondarySignOut();
   }
   logActivity('Signup','Member',v.name,'ID: '+id+' | Plan: '+(plan?plan.name:'')+' | Awaiting front-desk payment');
   if(needSignOut)GMSFB.signOut();
@@ -1009,6 +1015,7 @@ function loadApp(){
   updatePendingBadge();
   updateQueueBadge();
   updateMessageBadge();
+  updateSyncWarning();
   initScrollRefresh();
   navigate('dashboard');
 }
@@ -1276,6 +1283,32 @@ function updatePendingBadge(){
   const pending=Users.all().filter(u=>u.status==='pending').length;
   const badge=document.getElementById('pendingBadge');
   if(badge){badge.textContent=pending;badge.style.display=pending>0?'flex':'none';}
+}
+
+// ============================= CLOUD SYNC WARNING =============================
+// Surfaces Firebase connectivity problems that would otherwise silently split
+// devices onto separate localStorage databases (e.g. an admin who never sees a
+// staff registration made on another device).
+function ensureSyncWarnEl(){
+  let el=document.getElementById('syncWarn');
+  if(!el){el=document.createElement('div');el.id='syncWarn';el.className='sync-warn';document.body.appendChild(el);}
+  return el;
+}
+function updateSyncWarning(){
+  const el=ensureSyncWarnEl();
+  if(!window.GMSFB||!GMSFB.enabled){
+    el.className='sync-warn';
+    el.innerHTML='⚠️ <strong>Offline mode.</strong> Data is saved on this device only — it will NOT appear on your other devices. Connect to the internet and refresh the page.';
+    el.style.display='flex';
+    return;
+  }
+  if(typeof GMSFB.degraded==='function'&&GMSFB.degraded()){
+    el.className='sync-warn warn';
+    el.innerHTML='⚠️ <strong>Cloud sync problem.</strong> This device may be showing outdated data — registrations and approvals from other devices may not appear here. Check your internet connection and refresh.';
+    el.style.display='flex';
+    return;
+  }
+  el.style.display='none';
 }
 
 // ============================= PANEL ROUTER =============================
@@ -5150,7 +5183,6 @@ function updateHeroMemberCount(){
 }
 (function(){
   seedData();
-  if(window.GMSFB&&GMSFB.enabled)GMSFB.ensureSeededAdmin();
   updateHeroMemberCount();
   initHeroStats();
   initReveals();

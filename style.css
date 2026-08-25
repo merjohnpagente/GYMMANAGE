@@ -1016,6 +1016,22 @@ body::after{content:'';position:fixed;inset:0;z-index:9999;pointer-events:none;o
 .scan-corner.tr{top:14px;right:14px;border-left:none;border-bottom:none;border-radius:0 6px 0 0}
 .scan-corner.bl{bottom:14px;left:14px;border-right:none;border-top:none;border-radius:0 0 0 6px}
 .scan-corner.br{bottom:14px;right:14px;border-left:none;border-top:none;border-radius:0 0 6px 0}
+/* ============================================================
+   CLOUD SYNC WARNING BANNER
+   ============================================================ */
+.sync-warn{
+  position:fixed;top:14px;left:50%;transform:translateX(-50%);
+  z-index:11000;display:none;align-items:center;gap:10px;
+  background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.4);
+  color:#fca5a5;padding:10px 18px;border-radius:10px;
+  font-size:12px;font-weight:600;line-height:1.5;text-align:center;
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  box-shadow:0 8px 24px rgba(0,0,0,.45);max-width:min(92vw,620px);
+}
+.sync-warn strong{color:#fecaca}
+.sync-warn.warn{background:rgba(251,191,36,.1);border-color:rgba(251,191,36,.38);color:var(--gold)}
+.sync-warn.warn strong{color:var(--gold)}
+@media(max-width:640px){.sync-warn{top:auto;bottom:14px;font-size:11px;padding:8px 12px}}
 .scan-result-wrap{display:grid;gap:12px}
 .scan-result{border-radius:14px;padding:22px;text-align:center;background:var(--navy-700);border:1px solid var(--navy-600)}
 .scan-result.ok{border-color:rgba(127,250,136,.4);background:rgba(127,250,136,.06)}

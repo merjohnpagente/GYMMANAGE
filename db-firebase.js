@@ -23,7 +23,7 @@
   var AUTH_DOMAIN_SUFFIX='@fitcoregym.local';
   var GMSFB={
     enabled:true, ready:false, _applying:false,
-    _lastCloud:{}, _listeners:[],
+    _lastCloud:{}, _listeners:[], _syncErr:{},
     // ---------- bootstrap ----------
     init:function(){
       try{
@@ -36,11 +36,15 @@
           ||firebase.initializeApp(window.FIREBASE_CONFIG,'gms-admin-tasks'));
         var self=this;
         Object.keys(COLMAP).forEach(function(key){
-          self.db.collection(COLMAP[key]).onSnapshot(function(snap){self._onSnap(key,snap);},function(err){console.warn('[GMSFB] snapshot',COLMAP[key],err.code);});
+          self.db.collection(COLMAP[key]).onSnapshot(
+            function(snap){delete self._syncErr[COLMAP[key]];self._onSnap(key,snap);},
+            function(err){
+              console.warn('[GMSFB] snapshot',COLMAP[key],err.code);
+              self._syncErr[COLMAP[key]]=(err&&err.code)||'error';
+              if(typeof updateSyncWarning==='function')updateSyncWarning();
+            });
         });
         this.ready=true;
-        var self=this;
-        setTimeout(function(){self.ensureSeededPlans();},2500);
       }catch(e){console.error('[GMSFB] init failed',e);this.enabled=false;}
     },
     // ---------- one-time fresh start on this device ----------
@@ -50,6 +54,22 @@
       localStorage.removeItem('gms_login_attempts');
       localStorage.removeItem('gms_seeded');
       localStorage.setItem('gms_fb_fresh','2');
+    },
+    // ---------- sync health ----------
+    // True when at least one collection listener is failing (offline,
+    // permission-denied, etc.). Devices in this state may show stale data.
+    degraded:function(){return Object.keys(this._syncErr).length>0;},
+    // Resolves as soon as the first snapshot for a collection has arrived
+    // (empty or not), or after `ms` milliseconds. Used by login so accounts
+    // are always validated against the CLOUD user list, never an empty cache.
+    waitForSnap:function(key,ms){
+      var deadline=Date.now()+(ms||3000);
+      return new Promise(function(res){
+        (function poll(){
+          if(GMSFB._lastCloud[key]!==undefined||Date.now()>deadline)return res();
+          setTimeout(poll,100);
+        })();
+      });
     },
     // ---------- Firestore → cache ----------
     _onSnap:function(storageKey,snap){
@@ -66,7 +86,6 @@
     },
     _notify:function(storageKey){
       try{
-        this.ensureSeededAdmin();
         if(storageKey==='gms_plans'){
           var arr=[];try{arr=JSON.parse(localStorage.getItem('gms_plans'))||[];}catch(e){}
           if(!arr.length)this.ensureSeededPlans();
@@ -79,6 +98,7 @@
         }
         var appEl=document.getElementById('app');
         if(appEl&&appEl.classList.contains('active')&&typeof _lastPanel!=='undefined'&&_lastPanel&&typeof renderPanel==='function'){renderPanel(_lastPanel);}
+        if(typeof updateSyncWarning==='function')updateSyncWarning();
         if(typeof updateQueueBadge==='function')updateQueueBadge();
         if(typeof updateMessageBadge==='function')updateMessageBadge();
         if(typeof updatePendingBadge==='function')updatePendingBadge();
@@ -112,6 +132,7 @@
       return c;
     },
     // ---------- auth helpers ----------
+    adminAuthEmail:'admin@fitcoregym.local',
     authEmailFor:function(u){
       if(u&&u.email)return String(u.email).toLowerCase();
       var un=(u&&u.username?u.username:'user').toLowerCase();
@@ -132,16 +153,19 @@
         .catch(function(e){return{ok:false,error:self._mapAuthError(e),code:e&&e.code};});
     },
     createUserCreds:function(email,pass){
+      // NOTE: the secondary app stays signed in as the new user afterwards so
+      // secSetDoc() can write the profile doc with full authentication.
+      // Call secondarySignOut() once all profile writes are done.
       var sec=this.secondary;var self=this;
       return sec.auth().createUserWithEmailAndPassword(email,pass).then(function(cred){
-        var uid=cred.user.uid;
-        return sec.auth().signOut().then(function(){return{ok:true,uid:uid,email:email};});
+        return{ok:true,uid:cred.user.uid,email:email};
       }).catch(function(e){return{ok:false,error:self._mapAuthError(e),code:e&&e.code};});
     },
+    secondarySignOut:function(){try{if(this.secondary)this.secondary.auth().signOut();}catch(e){}},
     // Write a profile doc through the SECONDARY app's Firestore. Right after
     // createUserCreds the secondary app is authenticated as the new user, so
-    // this write always passes security rules — even if the default app's
-    // follow-up sign-in fails. Guarantees registrations reach the cloud.
+    // this write always passes security rules — on any device. Guarantees
+    // registrations reach the cloud.
     secSetDoc:function(col,doc){
       if(!this.secondary)return Promise.resolve({ok:false});
       try{
@@ -150,94 +174,6 @@
           .catch(function(e){console.warn('[GMSFB] secSetDoc',col,e&&e.code);return{ok:false};});
       }catch(e){console.warn('[GMSFB] secSetDoc',col,e);return Promise.resolve({ok:false});}
     },
-    createAdmin:function(username,pass,name){
-      var self=this;var email=this.authEmailFor({username:username});
-      return this.createUserCreds(email,pass).then(function(r){
-        if(!r.ok)return r;
-        var batch=self.db.batch();
-        batch.set(self.db.collection('users').doc('u1'),{id:'u1',name:name,username:username,authEmail:email,role:'admin',status:'active',createdAt:new Date().toISOString().split('T')[0]});
-        batch.set(self.db.collection('meta').doc('config'),{adminBootstrapped:true,at:new Date().toISOString()});
-        return batch.commit().then(function(){return{ok:true};}).catch(function(e){return{ok:false,error:'Database error: '+e.code};});
-      });
-    },
-    // ---------- built-in admin (admin / admin123) ----------
-    // Seeds the default admin account into Firebase on first boot so the
-    // system is usable immediately. Idempotent: skips if an admin exists.
-    _adminSeedTried:false,
-    adminAuthEmail:'admin@fitcoregym.local',
-    ensureSeededAdmin:function(){
-      if(this._adminSeedTried)return;
-      var users=[];try{users=JSON.parse(localStorage.getItem('gms_users'))||[];}catch(e){}
-      if(users.some(function(u){return u.role==='admin';})){this._adminSeedTried=true;return;}
-      this._adminSeedTried=true;
-      var self=this;var email=this.adminAuthEmail;
-      var wasSignedIn=!!this.auth.currentUser;
-      var adminDoc={id:'u1',name:'System Admin',username:'admin',authEmail:email,role:'admin',status:'active',contact:'09150435696',createdAt:new Date().toISOString().split('T')[0]};
-      this.secondary.auth().createUserWithEmailAndPassword(email,'admin123').then(function(){
-        // Authenticate the DEFAULT app so security rules allow the write
-        return self.auth.signInWithEmailAndPassword(email,'admin123').then(function(){
-          var batch=self.db.batch();
-          batch.set(self.db.collection('users').doc('u1'),adminDoc);
-          batch.set(self.db.collection('meta').doc('config'),{adminBootstrapped:true,at:new Date().toISOString()});
-          return batch.commit();
-        }).then(function(){if(!wasSignedIn)return self.auth.signOut();});
-      }).catch(function(e){
-        // Auth user may already exist (e.g. previous attempt) — just ensure the profile doc
-        if(e&&e.code==='auth/email-already-in-use'){
-          self.auth.signInWithEmailAndPassword(email,'admin123').then(function(){
-            return self.db.collection('users').doc('u1').set(adminDoc,{merge:true});
-          }).then(function(){if(!wasSignedIn)return self.auth.signOut();}).catch(function(){});
-        }
-      });
-    },
-    // ---------- default membership plans (required for member signup) ----------
-    _plansSeedTried:false,
-    ensureSeededPlans:function(){
-      if(this._plansSeedTried)return;
-      var plans=[];try{plans=JSON.parse(localStorage.getItem('gms_plans'))||[];}catch(e){}
-      if(plans.length){this._plansSeedTried=true;return;}
-      this._plansSeedTried=true;
-      var self=this;var wasSignedIn=!!this.auth.currentUser;
-      var defaults=[
-        {id:'pl1',name:'Basic',price:500,duration:1,sessions:8,benefits:'Gym access\nLocker use',status:'Active'},
-        {id:'pl2',name:'Standard',price:900,duration:1,sessions:16,benefits:'Gym access\nLocker use\n1 trainer session',status:'Active'},
-        {id:'pl3',name:'Premium',price:1500,duration:3,sessions:'Unlimited',benefits:'Full access\nPriority trainer\nFree assessment',status:'Active'}
-      ];
-      this.auth.signInWithEmailAndPassword(this.adminAuthEmail,'admin123').then(function(){
-        var batch=self.db.batch();
-        defaults.forEach(function(p){batch.set(self.db.collection('plans').doc(p.id),p);});
-        return batch.commit();
-      }).then(function(){if(!wasSignedIn)return self.auth.signOut();})
-        .catch(function(e){
-          console.warn('[GMSFB] plan seed',e&&e.code);
-          if(!wasSignedIn){try{self.auth.signOut();}catch(_){}}
-          // Admin account may not exist yet on very first boot — retry shortly
-          var c=e&&e.code||'';
-          if(self._plansRetry<2&&(c==='auth/user-not-found'||c==='auth/invalid-credential'||c==='auth/invalid-login-credentials')){
-            self._plansRetry=(self._plansRetry||0)+1;
-            setTimeout(function(){self._plansSeedTried=false;self.ensureSeededPlans();},3000);
-          }
-        });
-    },
-    // Resolves once an admin account is present in the local cache (waits for
-    // the cloud snapshot / seeding so an immediate admin login never misses).
-    ensureAdminReady:function(){
-      var self=this;
-      function adminInCache(){
-        var u=[];try{u=JSON.parse(localStorage.getItem('gms_users'))||[];}catch(e){}
-        return u.some(function(x){return x.role==='admin';});
-      }
-      if(adminInCache())return Promise.resolve(true);
-      this.ensureSeededAdmin();
-      return new Promise(function(res){
-        var tries=0;
-        var t=setInterval(function(){
-          tries++;
-          if(adminInCache()||tries>15){clearInterval(t);res(adminInCache());}
-        },300);
-      });
-    },
-    signOut:function(){try{this.auth.signOut();}catch(e){}}
   };
   window.GMSFB=GMSFB;
   GMSFB.init();
