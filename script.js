@@ -165,6 +165,18 @@ class AuthService{
         return{ok:false,error:r.error};
       }
       LoginAttempts.register(username);
+      // Built-in admin (admin/admin123): wait for the auto-seed if this is the
+      // very first visit, then retry the lookup before giving up.
+      if(username.toLowerCase()==='admin'){
+        const ready=await GMSFB.ensureAdminReady();
+        if(ready){
+          const admin=Users.all().find(x=>x.role==='admin'&&x.username.toLowerCase()==='admin');
+          if(admin){
+            const r=await GMSFB.signIn(GMSFB.authEmailFor(admin),password);
+            if(r.ok){LoginAttempts.reset(username);this.setSession(admin);return{ok:true,user:admin};}
+          }
+        }
+      }
       return{ok:false,error:'Invalid username or password.'};
     }
     // ---------- OFFLINE fallback (local hashes) ----------
@@ -601,41 +613,7 @@ function regStep2Next(){
     doRegister();
   }
 }
-function showLogin(){document.getElementById('loginForm').style.display='block';document.getElementById('registerForm').style.display='none';document.getElementById('loginError').style.display='none';const ms=document.getElementById('memberSignup');if(ms)ms.style.display='none';const lc=document.getElementById('loginCard');if(lc)lc.style.display='block';showInitialSetupIfNeeded();}
-
-// ============================= FIRST-RUN ADMIN BOOTSTRAP (Firebase) =============================
-// Shown only in online mode while no admin account exists in the cloud database.
-function showInitialSetupIfNeeded(){
-  const f=document.getElementById('setupForm'),l=document.getElementById('loginForm');
-  if(!f||!l)return;
-  const need=(window.GMSFB&&GMSFB.enabled)?GMSFB.needsAdminSetup():false;
-  f.style.display=need?'block':'none';
-  l.style.display=need?'none':'block';
-}
-async function doInitialSetup(){
-  const err=document.getElementById('setupError');
-  const fail=m=>{err.textContent=m;err.style.display='block';};
-  err.style.display='none';
-  if(!(window.GMSFB&&GMSFB.enabled)){fail('Online mode is not available. Please check your connection.');return;}
-  const username=document.getElementById('setupUser').value.trim();
-  const name=document.getElementById('setupName').value.trim()||'System Admin';
-  const pass=document.getElementById('setupPass').value;
-  const pass2=document.getElementById('setupPass2').value;
-  if(!username)return fail('Please choose an admin username.');
-  if(!/^[a-zA-Z0-9._-]{3,20}$/.test(username))return fail('Username must be 3-20 characters (letters, numbers, dot, dash, underscore).');
-  if(!pass)return fail('Please enter a password.');
-  if(pass.length<6)return fail('Password must be at least 6 characters.');
-  if(pass!==pass2)return fail('Passwords do not match.');
-  const btn=window.event&&window.event.target;
-  if(btn){btn.disabled=true;btn.textContent='Creating…';}
-  const r=await GMSFB.createAdmin(username,pass,name);
-  if(btn){btn.disabled=false;btn.textContent='Create Admin Account';}
-  if(!r.ok)return fail(r.error);
-  document.getElementById('setupPass').value='';
-  document.getElementById('setupPass2').value='';
-  showInitialSetupIfNeeded();
-  toast('Admin account created. Please log in.','success');
-}
+function showLogin(){document.getElementById('loginForm').style.display='block';document.getElementById('registerForm').style.display='none';document.getElementById('loginError').style.display='none';const ms=document.getElementById('memberSignup');if(ms)ms.style.display='none';const lc=document.getElementById('loginCard');if(lc)lc.style.display='block';}
 function showRegister(){
   resetRegisterForm();
   document.getElementById('loginForm').style.display='none';
@@ -5133,7 +5111,7 @@ function updateHeroMemberCount(){
 }
 (function(){
   seedData();
-  showInitialSetupIfNeeded();
+  if(window.GMSFB&&GMSFB.enabled)GMSFB.ensureSeededAdmin();
   updateHeroMemberCount();
   initHeroStats();
   initReveals();

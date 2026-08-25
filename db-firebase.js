@@ -64,7 +64,7 @@
     },
     _notify:function(storageKey){
       try{
-        if(storageKey==='gms_users'&&typeof showInitialSetupIfNeeded==='function')showInitialSetupIfNeeded();
+        this.ensureSeededAdmin();
         var appEl=document.getElementById('app');
         if(appEl&&appEl.classList.contains('active')&&typeof _lastPanel!=='undefined'&&_lastPanel&&typeof renderPanel==='function'){renderPanel(_lastPanel);}
         if(typeof updateQueueBadge==='function')updateQueueBadge();
@@ -136,10 +136,52 @@
         return batch.commit().then(function(){return{ok:true};}).catch(function(e){return{ok:false,error:'Database error: '+e.code};});
       });
     },
-    needsAdminSetup:function(){
-      if(!this.enabled||!this.ready)return false;
+    // ---------- built-in admin (admin / admin123) ----------
+    // Seeds the default admin account into Firebase on first boot so the
+    // system is usable immediately. Idempotent: skips if an admin exists.
+    _adminSeedTried:false,
+    adminAuthEmail:'admin@fitcoregym.local',
+    ensureSeededAdmin:function(){
+      if(this._adminSeedTried)return;
       var users=[];try{users=JSON.parse(localStorage.getItem('gms_users'))||[];}catch(e){}
-      return !users.some(function(u){return u.role==='admin';});
+      if(users.some(function(u){return u.role==='admin';})){this._adminSeedTried=true;return;}
+      this._adminSeedTried=true;
+      var self=this;var email=this.adminAuthEmail;
+      var adminDoc={id:'u1',name:'System Admin',username:'admin',authEmail:email,role:'admin',status:'active',contact:'09150435696',createdAt:new Date().toISOString().split('T')[0]};
+      this.secondary.auth().createUserWithEmailAndPassword(email,'admin123').then(function(){
+        // Authenticate the DEFAULT app so security rules allow the write, then sign out
+        return self.auth.signInWithEmailAndPassword(email,'admin123').then(function(){
+          var batch=self.db.batch();
+          batch.set(self.db.collection('users').doc('u1'),adminDoc);
+          batch.set(self.db.collection('meta').doc('config'),{adminBootstrapped:true,at:new Date().toISOString()});
+          return batch.commit();
+        }).then(function(){return self.auth.signOut();});
+      }).catch(function(e){
+        // Auth user may already exist (e.g. previous attempt) — just ensure the profile doc
+        if(e&&e.code==='auth/email-already-in-use'){
+          self.auth.signInWithEmailAndPassword(email,'admin123').then(function(){
+            return self.db.collection('users').doc('u1').set(adminDoc,{merge:true});
+          }).then(function(){return self.auth.signOut();}).catch(function(){});
+        }
+      });
+    },
+    // Resolves once an admin account is present in the local cache (waits for
+    // the cloud snapshot / seeding so an immediate admin login never misses).
+    ensureAdminReady:function(){
+      var self=this;
+      function adminInCache(){
+        var u=[];try{u=JSON.parse(localStorage.getItem('gms_users'))||[];}catch(e){}
+        return u.some(function(x){return x.role==='admin';});
+      }
+      if(adminInCache())return Promise.resolve(true);
+      this.ensureSeededAdmin();
+      return new Promise(function(res){
+        var tries=0;
+        var t=setInterval(function(){
+          tries++;
+          if(adminInCache()||tries>15){clearInterval(t);res(adminInCache());}
+        },300);
+      });
     },
     signOut:function(){try{this.auth.signOut();}catch(e){}}
   };
