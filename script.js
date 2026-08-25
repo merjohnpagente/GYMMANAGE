@@ -449,12 +449,10 @@ function seedData(){
   Object.values(KEY).forEach(k=>localStorage.removeItem(k));
   localStorage.removeItem('gms_login_attempts');
   LoginAttempts.save({});
-  // Users (keep login accounts) — passwords stored ONLY as salted hashes, never plaintext
-  const users=[
-    {id:'u1',name:'System Admin',username:'admin',passwordHash:hashPassword('admin123'),role:'admin',status:'active',contact:'09150435696',createdAt:today()},
-    {id:'u2',name:'Marie Santos',username:'staff',passwordHash:hashPassword('staff123'),role:'staff',status:'active',createdAt:today()},
-    {id:'u3',name:'Coach Ryan',username:'trainer',passwordHash:hashPassword('trainer123'),role:'trainer',status:'active',coachName:'Coach Ryan',specializations:['Personal Training','Strength Training','HIIT'],availableDays:['Mon','Tue','Wed','Thu','Fri','Sat'],availableFrom:'6:00 AM',availableTo:'9:00 PM',bio:'Certified strength coach with 8+ years of experience. Specializes in personalized programs, form correction, and helping members hit PRs safely.',createdAt:today()}
-  ];
+  // Users — NONE. All accounts (admin/staff/trainer/member) live in Firebase
+  // Authentication + the cloud database. There are no offline/local accounts
+  // and no credentials anywhere in this source code.
+  const users=[];
   Users.save(users);
   // Plans (keep default plans)
   const plans=[
