@@ -165,16 +165,21 @@ class AuthService{
         return{ok:false,error:r.error};
       }
       LoginAttempts.register(username);
-      // Built-in admin (admin/admin123): wait for the auto-seed if this is the
-      // very first visit, then retry the lookup before giving up.
+      // Built-in admin (admin/admin123): wait for the auto-seed, and if the
+      // profile doc never landed (e.g. rules were missing at first boot),
+      // authenticate directly and self-heal the document.
       if(username.toLowerCase()==='admin'){
         const ready=await GMSFB.ensureAdminReady();
-        if(ready){
-          const admin=Users.all().find(x=>x.role==='admin'&&x.username.toLowerCase()==='admin');
-          if(admin){
-            const r=await GMSFB.signIn(GMSFB.authEmailFor(admin),password);
-            if(r.ok){LoginAttempts.reset(username);this.setSession(admin);return{ok:true,user:admin};}
+        let admin=ready?Users.all().find(x=>x.role==='admin'&&x.username.toLowerCase()==='admin'):null;
+        let r=admin?await GMSFB.signIn(GMSFB.authEmailFor(admin),password):await GMSFB.signIn(GMSFB.adminAuthEmail,password);
+        if(r.ok){
+          if(!admin){
+            admin={id:'u1',name:'System Admin',username:'admin',authEmail:GMSFB.adminAuthEmail,role:'admin',status:'active',contact:'09150435696',createdAt:today()};
+            Users.add(admin);
           }
+          LoginAttempts.reset(username);
+          this.setSession(admin);
+          return{ok:true,user:admin};
         }
       }
       return{ok:false,error:'Invalid username or password.'};
@@ -216,12 +221,19 @@ class AuthService{
     // Sanitize free-text fields at write time (defense in depth against stored XSS)
     ['name','contact','username','coachName','bio'].forEach(k=>{if(typeof rest[k]==='string')rest[k]=sanitizeText(rest[k]);});
     const user={id:uid(),role,status,createdAt:today(),...rest};
+    let needSignOut=false;
     if(window.GMSFB&&GMSFB.enabled){
-      const r=await GMSFB.createUserCreds(GMSFB.authEmailFor({username:payload.username}),password);
+      const authEmail=GMSFB.authEmailFor({username:payload.username});
+      const r=await GMSFB.createUserCreds(authEmail,password);
       if(!r.ok)return{ok:false,error:r.error};
-      user.authEmail=GMSFB.authEmailFor({username:payload.username});
+      user.authEmail=authEmail;
+      // Authenticate the default app so the profile write passes security rules
+      const wasSignedIn=!!GMSFB.auth.currentUser;
+      const si=await GMSFB.signIn(authEmail,password);
+      if(si.ok)needSignOut=!wasSignedIn;
     } else if(password){user.passwordHash=hashPassword(password);}
     Users.add(user);
+    if(needSignOut)GMSFB.signOut();
     return{ok:true,user};
   }
 }
@@ -800,11 +812,15 @@ async function submitMemberSignup(){
   const v=msValidateCredentials(err);
   if(!v)return;
   // Online mode: create the Firebase Auth account (real email = login identity)
-  let authEmail=null;
+  let authEmail=null;let needSignOut=false;
   if(window.GMSFB&&GMSFB.enabled){
     authEmail=GMSFB.authEmailFor({email:v.email});
     const r=await GMSFB.createUserCreds(authEmail,v.pass);
     if(!r.ok){err.textContent=r.error;err.style.display='block';return;}
+    // Authenticate the default app so the member write passes security rules
+    const wasSignedIn=!!GMSFB.auth.currentUser;
+    const si=await GMSFB.signIn(authEmail,v.pass);
+    if(si.ok)needSignOut=!wasSignedIn;
   }
   const plan=planId?Plans.one(planId):null;
   const id=nextMemberId();
@@ -813,6 +829,7 @@ async function submitMemberSignup(){
   Members.add(member);
   pushPendingPaymentNotif(member);
   logActivity('Signup','Member',v.name,'ID: '+id+' | Plan: '+(plan?plan.name:'')+' | Awaiting front-desk payment');
+  if(needSignOut)GMSFB.signOut();
   _memberSignupPlanId=null;
   document.getElementById('msStep3').style.display='none';
   const done=document.getElementById('msDone');

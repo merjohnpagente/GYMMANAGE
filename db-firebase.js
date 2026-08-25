@@ -39,15 +39,17 @@
           self.db.collection(COLMAP[key]).onSnapshot(function(snap){self._onSnap(key,snap);},function(err){console.warn('[GMSFB] snapshot',COLMAP[key],err.code);});
         });
         this.ready=true;
+        var self=this;
+        setTimeout(function(){self.ensureSeededPlans();},2500);
       }catch(e){console.error('[GMSFB] init failed',e);this.enabled=false;}
     },
     // ---------- one-time fresh start on this device ----------
     bootstrapLocal:function(){
-      if(localStorage.getItem('gms_fb_fresh')==='1')return;
+      if(localStorage.getItem('gms_fb_fresh')==='2')return;
       Object.keys(COLMAP).forEach(function(k){localStorage.removeItem(k);});
       localStorage.removeItem('gms_login_attempts');
       localStorage.removeItem('gms_seeded');
-      localStorage.setItem('gms_fb_fresh','1');
+      localStorage.setItem('gms_fb_fresh','2');
     },
     // ---------- Firestore → cache ----------
     _onSnap:function(storageKey,snap){
@@ -65,6 +67,16 @@
     _notify:function(storageKey){
       try{
         this.ensureSeededAdmin();
+        if(storageKey==='gms_plans'){
+          var arr=[];try{arr=JSON.parse(localStorage.getItem('gms_plans'))||[];}catch(e){}
+          if(!arr.length)this.ensureSeededPlans();
+          if(typeof renderExplorePlans==='function')renderExplorePlans();
+          var mo=document.getElementById('memberSignup');
+          if(mo&&mo.style.display!=='none'&&typeof populateMsPlanSelect==='function'){
+            var pick=(typeof _msPlanPicked!=='undefined'&&_msPlanPicked)||(typeof _memberSignupPlanId!=='undefined'&&_memberSignupPlanId)||undefined;
+            populateMsPlanSelect(pick);
+          }
+        }
         var appEl=document.getElementById('app');
         if(appEl&&appEl.classList.contains('active')&&typeof _lastPanel!=='undefined'&&_lastPanel&&typeof renderPanel==='function'){renderPanel(_lastPanel);}
         if(typeof updateQueueBadge==='function')updateQueueBadge();
@@ -147,23 +159,53 @@
       if(users.some(function(u){return u.role==='admin';})){this._adminSeedTried=true;return;}
       this._adminSeedTried=true;
       var self=this;var email=this.adminAuthEmail;
+      var wasSignedIn=!!this.auth.currentUser;
       var adminDoc={id:'u1',name:'System Admin',username:'admin',authEmail:email,role:'admin',status:'active',contact:'09150435696',createdAt:new Date().toISOString().split('T')[0]};
       this.secondary.auth().createUserWithEmailAndPassword(email,'admin123').then(function(){
-        // Authenticate the DEFAULT app so security rules allow the write, then sign out
+        // Authenticate the DEFAULT app so security rules allow the write
         return self.auth.signInWithEmailAndPassword(email,'admin123').then(function(){
           var batch=self.db.batch();
           batch.set(self.db.collection('users').doc('u1'),adminDoc);
           batch.set(self.db.collection('meta').doc('config'),{adminBootstrapped:true,at:new Date().toISOString()});
           return batch.commit();
-        }).then(function(){return self.auth.signOut();});
+        }).then(function(){if(!wasSignedIn)return self.auth.signOut();});
       }).catch(function(e){
         // Auth user may already exist (e.g. previous attempt) — just ensure the profile doc
         if(e&&e.code==='auth/email-already-in-use'){
           self.auth.signInWithEmailAndPassword(email,'admin123').then(function(){
             return self.db.collection('users').doc('u1').set(adminDoc,{merge:true});
-          }).then(function(){return self.auth.signOut();}).catch(function(){});
+          }).then(function(){if(!wasSignedIn)return self.auth.signOut();}).catch(function(){});
         }
       });
+    },
+    // ---------- default membership plans (required for member signup) ----------
+    _plansSeedTried:false,
+    ensureSeededPlans:function(){
+      if(this._plansSeedTried)return;
+      var plans=[];try{plans=JSON.parse(localStorage.getItem('gms_plans'))||[];}catch(e){}
+      if(plans.length){this._plansSeedTried=true;return;}
+      this._plansSeedTried=true;
+      var self=this;var wasSignedIn=!!this.auth.currentUser;
+      var defaults=[
+        {id:'pl1',name:'Basic',price:500,duration:1,sessions:8,benefits:'Gym access\nLocker use',status:'Active'},
+        {id:'pl2',name:'Standard',price:900,duration:1,sessions:16,benefits:'Gym access\nLocker use\n1 trainer session',status:'Active'},
+        {id:'pl3',name:'Premium',price:1500,duration:3,sessions:'Unlimited',benefits:'Full access\nPriority trainer\nFree assessment',status:'Active'}
+      ];
+      this.auth.signInWithEmailAndPassword(this.adminAuthEmail,'admin123').then(function(){
+        var batch=self.db.batch();
+        defaults.forEach(function(p){batch.set(self.db.collection('plans').doc(p.id),p);});
+        return batch.commit();
+      }).then(function(){if(!wasSignedIn)return self.auth.signOut();})
+        .catch(function(e){
+          console.warn('[GMSFB] plan seed',e&&e.code);
+          if(!wasSignedIn){try{self.auth.signOut();}catch(_){}}
+          // Admin account may not exist yet on very first boot — retry shortly
+          var c=e&&e.code||'';
+          if(self._plansRetry<2&&(c==='auth/user-not-found'||c==='auth/invalid-credential'||c==='auth/invalid-login-credentials')){
+            self._plansRetry=(self._plansRetry||0)+1;
+            setTimeout(function(){self._plansSeedTried=false;self.ensureSeededPlans();},3000);
+          }
+        });
     },
     // Resolves once an admin account is present in the local cache (waits for
     // the cloud snapshot / seeding so an immediate admin login never misses).
