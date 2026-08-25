@@ -5,7 +5,7 @@ const QR_SCAN_DUP_WINDOW_MIN=30;
 const DB={
   get:(k)=>{try{return JSON.parse(localStorage.getItem(k))||[];}catch{return[];}},
   getObj:(k)=>{try{const v=JSON.parse(localStorage.getItem(k));return(v&&typeof v==='object'&&!Array.isArray(v))?v:{};}catch{return{};}},
-  set:(k,v)=>localStorage.setItem(k,JSON.stringify(v)),
+  set:(k,v)=>{localStorage.setItem(k,JSON.stringify(v));if(window.GMSFB&&GMSFB.enabled&&GMSFB.ready&&!GMSFB._applying)GMSFB.pushCollection(k,v);},
   getOne:(k,id)=>DB.get(k).find(x=>x.id===id)
 };
 
@@ -137,12 +137,37 @@ class AuthService{
   clearSession(){sessionStorage.removeItem('gms_session');}
   findByUsername(username){return Users.all().find(x=>x.username===username);}
 // Returns {ok:true,user} or {ok:false,error}
-  login(username,password){
+  async login(username,password){
     if(!username||!password)return{ok:false,error:'Please fill in all required fields.'};
     if(LoginAttempts.get(username)>=LOGIN_MAX_ATTEMPTS)return{ok:false,error:'Account locked. Too many failed attempts — try again in 15 minutes.'};
     const found=this.findByUsername(username);
     if(found&&found.status==='locked')return{ok:false,error:'Account locked. Please contact the administrator.'};
     if(found&&found.status==='pending')return{ok:false,error:'Your account is pending admin approval. Please wait.'};
+    // ---------- ONLINE (Firebase Auth) ----------
+    if(window.GMSFB&&GMSFB.enabled){
+      if(found){
+        const r=await GMSFB.signIn(GMSFB.authEmailFor(found),password);
+        if(r.ok){LoginAttempts.reset(username);this.setSession(found);return{ok:true,user:found};}
+        LoginAttempts.register(username);
+        return{ok:false,error:r.error};
+      }
+      const member=Members.all().find(m=>m.username&&m.username.toLowerCase()===username.toLowerCase());
+      if(member){
+        if(member.status==='Archived')return{ok:false,error:'Your account has been archived. Please contact the front desk.'};
+        const r=await GMSFB.signIn(GMSFB.authEmailFor(member),password);
+        if(r.ok){
+          LoginAttempts.reset(username);
+          const sess={id:member.id,email:member.email||'',username:member.username,name:member.name,contact:member.contact,role:'member',memberId:member.id,status:member.status};
+          this.setSession(sess);
+          return{ok:true,user:sess};
+        }
+        LoginAttempts.register(username);
+        return{ok:false,error:r.error};
+      }
+      LoginAttempts.register(username);
+      return{ok:false,error:'Invalid username or password.'};
+    }
+    // ---------- OFFLINE fallback (local hashes) ----------
     if(found){
       const ok=found.passwordHash?verifyPassword(password,found.passwordHash):(typeof found.password==='string'&&found.password===password);
       if(ok){
@@ -171,7 +196,7 @@ class AuthService{
     return{ok:false,error:attempts>=LOGIN_MAX_ATTEMPTS?'Account locked. Too many failed attempts — try again in 15 minutes.':'Invalid username or password.'};
   }
   logout(){this.clearSession();}
-  register(role,payload){
+  async register(role,payload){
     const users=Users.all();
     if(users.find(x=>x.username===payload.username))return{ok:false,error:'Username already taken. Please choose a different username.'};
     const status=role==='staff'?'pending':'active';
@@ -179,7 +204,11 @@ class AuthService{
     // Sanitize free-text fields at write time (defense in depth against stored XSS)
     ['name','contact','username','coachName','bio'].forEach(k=>{if(typeof rest[k]==='string')rest[k]=sanitizeText(rest[k]);});
     const user={id:uid(),role,status,createdAt:today(),...rest};
-    if(password)user.passwordHash=hashPassword(password);
+    if(window.GMSFB&&GMSFB.enabled){
+      const r=await GMSFB.createUserCreds(GMSFB.authEmailFor({username:payload.username}),password);
+      if(!r.ok)return{ok:false,error:r.error};
+      user.authEmail=GMSFB.authEmailFor({username:payload.username});
+    } else if(password){user.passwordHash=hashPassword(password);}
     Users.add(user);
     return{ok:true,user};
   }
@@ -371,6 +400,9 @@ function migrateLegacyPasswords(){
 
 // ============================= SEED DATA =============================
 function seedData(){
+  // Online (Firebase) mode: cloud is the source of truth — start with a clean
+  // local mirror and let onSnapshot listeners populate it. No local seeds.
+  if(window.GMSFB&&GMSFB.enabled){GMSFB.bootstrapLocal();return;}
   if(localStorage.getItem('gms_seeded')==='13'){
     migrateLegacyPasswords();
     return;
@@ -453,10 +485,13 @@ function showLandingSection(section, linkEl) {
   iconize(document);
   initReveals();
 }
-function doLogin(){
+async function doLogin(){
   const u=document.getElementById('loginUser').value.trim();
   const p=document.getElementById('loginPass').value;
-  const result=Auth.login(u,p);
+  const btn=document.querySelector('#loginForm .btn-primary');
+  if(btn){btn.disabled=true;btn.textContent='Logging in…';}
+  const result=await Auth.login(u,p);
+  if(btn){btn.disabled=false;btn.textContent='Log In';}
   if(!result.ok){showLoginError(result.error);return;}
   currentUser=result.user;
   loadApp();
@@ -484,6 +519,7 @@ function confirmLogout(){
 }
 function doLogout(){
   clearSession();currentUser=null;
+  if(window.GMSFB&&GMSFB.enabled)GMSFB.signOut();
   if(_pendingPoll){clearInterval(_pendingPoll);_pendingPoll=null;}
   const pg=document.getElementById('pendingGate');if(pg)pg.style.display='none';
   document.getElementById('app').classList.remove('active');
@@ -565,7 +601,41 @@ function regStep2Next(){
     doRegister();
   }
 }
-function showLogin(){document.getElementById('loginForm').style.display='block';document.getElementById('registerForm').style.display='none';document.getElementById('loginError').style.display='none';const ms=document.getElementById('memberSignup');if(ms)ms.style.display='none';const lc=document.getElementById('loginCard');if(lc)lc.style.display='block';}
+function showLogin(){document.getElementById('loginForm').style.display='block';document.getElementById('registerForm').style.display='none';document.getElementById('loginError').style.display='none';const ms=document.getElementById('memberSignup');if(ms)ms.style.display='none';const lc=document.getElementById('loginCard');if(lc)lc.style.display='block';showInitialSetupIfNeeded();}
+
+// ============================= FIRST-RUN ADMIN BOOTSTRAP (Firebase) =============================
+// Shown only in online mode while no admin account exists in the cloud database.
+function showInitialSetupIfNeeded(){
+  const f=document.getElementById('setupForm'),l=document.getElementById('loginForm');
+  if(!f||!l)return;
+  const need=(window.GMSFB&&GMSFB.enabled)?GMSFB.needsAdminSetup():false;
+  f.style.display=need?'block':'none';
+  l.style.display=need?'none':'block';
+}
+async function doInitialSetup(){
+  const err=document.getElementById('setupError');
+  const fail=m=>{err.textContent=m;err.style.display='block';};
+  err.style.display='none';
+  if(!(window.GMSFB&&GMSFB.enabled)){fail('Online mode is not available. Please check your connection.');return;}
+  const username=document.getElementById('setupUser').value.trim();
+  const name=document.getElementById('setupName').value.trim()||'System Admin';
+  const pass=document.getElementById('setupPass').value;
+  const pass2=document.getElementById('setupPass2').value;
+  if(!username)return fail('Please choose an admin username.');
+  if(!/^[a-zA-Z0-9._-]{3,20}$/.test(username))return fail('Username must be 3-20 characters (letters, numbers, dot, dash, underscore).');
+  if(!pass)return fail('Please enter a password.');
+  if(pass.length<6)return fail('Password must be at least 6 characters.');
+  if(pass!==pass2)return fail('Passwords do not match.');
+  const btn=window.event&&window.event.target;
+  if(btn){btn.disabled=true;btn.textContent='Creating…';}
+  const r=await GMSFB.createAdmin(username,pass,name);
+  if(btn){btn.disabled=false;btn.textContent='Create Admin Account';}
+  if(!r.ok)return fail(r.error);
+  document.getElementById('setupPass').value='';
+  document.getElementById('setupPass2').value='';
+  showInitialSetupIfNeeded();
+  toast('Admin account created. Please log in.','success');
+}
 function showRegister(){
   resetRegisterForm();
   document.getElementById('loginForm').style.display='none';
@@ -743,7 +813,7 @@ function msValidateCredentials(err){
   if(Members.all().find(m=>m.contact===normContact))return fail('Phone number already registered. Please log in instead or use another number.');
   return{name,uname,contact:normContact,email,pass};
 }
-function submitMemberSignup(){
+async function submitMemberSignup(){
   const err=document.getElementById('msError');
   if(signupRateCheck()){err.textContent='Too many sign-up attempts. Please wait a few minutes and try again.';err.style.display='block';return;}
   const sel=document.getElementById('msPlanSelect');
@@ -751,9 +821,17 @@ function submitMemberSignup(){
   if(!planId){err.textContent='Please choose a plan first.';err.style.display='block';return;}
   const v=msValidateCredentials(err);
   if(!v)return;
+  // Online mode: create the Firebase Auth account (real email = login identity)
+  let authEmail=null;
+  if(window.GMSFB&&GMSFB.enabled){
+    authEmail=GMSFB.authEmailFor({email:v.email});
+    const r=await GMSFB.createUserCreds(authEmail,v.pass);
+    if(!r.ok){err.textContent=r.error;err.style.display='block';return;}
+  }
   const plan=planId?Plans.one(planId):null;
   const id=nextMemberId();
-  const member={id,name:sanitizeText(v.name),username:v.uname,contact:v.contact,email:sanitizeText(v.email),passwordHash:hashPassword(v.pass),planId,status:'pending_payment',startDate:'',expiryDate:'',planStart:'',qrToken:'',age:'',sex:'',address:'',ecName:'',ecNum:'',notes:'',createdAt:today(),createdBy:'Self',createdByUsername:v.uname,createdByRole:'member',bgCheckStatus:'Pending',bgCheckDate:'',bgCheckBy:'',bgCheckNotes:''};
+  const member={id,name:sanitizeText(v.name),username:v.uname,contact:v.contact,email:sanitizeText(v.email),planId,status:'pending_payment',startDate:'',expiryDate:'',planStart:'',qrToken:'',age:'',sex:'',address:'',ecName:'',ecNum:'',notes:'',createdAt:today(),createdBy:'Self',createdByUsername:v.uname,createdByRole:'member',bgCheckStatus:'Pending',bgCheckDate:'',bgCheckBy:'',bgCheckNotes:''};
+  if(authEmail)member.authEmail=authEmail;else member.passwordHash=hashPassword(v.pass);
   Members.add(member);
   pushPendingPaymentNotif(member);
   logActivity('Signup','Member',v.name,'ID: '+id+' | Plan: '+(plan?plan.name:'')+' | Awaiting front-desk payment');
@@ -766,7 +844,7 @@ function submitMemberSignup(){
   if(updatePendingBadge)updatePendingBadge();
 }
 function onRegRoleChange(val){}
-function doRegister(){
+async function doRegister(){
   const role=document.getElementById('regRole').value;
   const rateErr=role==='trainer'?document.getElementById('regError3'):document.getElementById('regError2');
   if(rateErr&&signupRateCheck()){rateErr.textContent='Too many sign-up attempts. Please wait a few minutes and try again.';rateErr.style.display='block';return;}
@@ -792,7 +870,7 @@ function doRegister(){
     if(days.length===0||!from||!to){err3.textContent='Please fill in your availability (days and hours).';err3.style.display='block';return;}
     trainerData={coachName,specializations:specs,availableDays:days,availableFrom:from,availableTo:to,bio};
   }
-  const result=Auth.register(role,{name,contact:fullContact,username:user,password:pass,...trainerData});
+  const result=await Auth.register(role,{name,contact:fullContact,username:user,password:pass,...trainerData});
   if(!result.ok){
     const errId=role==='trainer'?'regError3':'regError2';
     const errEl=document.getElementById(errId);
@@ -1921,7 +1999,7 @@ function openMemberModal(id=null){
   }
   openModal('memberModal');
 }
-function saveMember(){
+async function saveMember(){
   const name=document.getElementById('mf_name').value.trim();
   const contact=document.getElementById('mf_contact').value.trim();
   // If non-admin is editing, preserve the existing plan from the DB
@@ -1957,7 +2035,16 @@ function saveMember(){
     notes:sanitizeText(document.getElementById('mf_notes').value.trim()),status:'Active'
   };
   if(uname)data.username=uname;
-  if(pass)data.passwordHash=hashPassword(pass);
+  // Online mode: member login credentials live in Firebase Auth
+  let memberAuthEmail=null;
+  if(window.GMSFB&&GMSFB.enabled&&pass){
+    if(editingMemberId){err.textContent='Changing an existing member\u2019s password is not supported in online mode.';err.style.display='block';return;}
+    memberAuthEmail=GMSFB.authEmailFor({username:uname});
+    const r=await GMSFB.createUserCreds(memberAuthEmail,pass);
+    if(!r.ok){err.textContent=r.error;err.style.display='block';return;}
+  }
+  if(memberAuthEmail)data.authEmail=memberAuthEmail;
+  else if(pass)data.passwordHash=hashPassword(pass);
   const confirmTitle=editingMemberId?'Update Member':'Add New Member';
   const confirmMsg=editingMemberId
     ?`Save changes to <strong>${esc(name)}</strong>? Billing records linked to this member will also be synced automatically.`
@@ -4777,7 +4864,7 @@ function openUserModal(id=null){
   }
   openModal('userModal');
 }
-function saveUser(){
+async function saveUser(){
   const name=document.getElementById('uf_name').value.trim();
   const contact=document.getElementById('uf_contact').value.trim();
   const username=document.getElementById('uf_user').value.trim();
@@ -4792,12 +4879,23 @@ function saveUser(){
   const users=Users.all();
   const dup=users.find(u=>u.username===username&&u.id!==editingUserId);
   if(dup){err.textContent='Username already taken. Please choose a different username.';err.style.display='block';return;}
+  // Online mode: passwords are managed by Firebase Auth
+  let authEmail=null;
+  if(window.GMSFB&&GMSFB.enabled){
+    if(editingUserId&&pass){err.textContent='Changing another user\u2019s password is not supported in online mode.';err.style.display='block';return;}
+    if(!editingUserId){
+      authEmail=GMSFB.authEmailFor({username:username});
+      const r=await GMSFB.createUserCreds(authEmail,pass);
+      if(!r.ok){err.textContent=r.error;err.style.display='block';return;}
+    }
+  }
   if(editingUserId){
     const idx=users.findIndex(u=>u.id===editingUserId);
-    if(idx>-1){users[idx].name=name;users[idx].contact=contact;users[idx].username=username;users[idx].role=role;if(pass){users[idx].passwordHash=hashPassword(pass);delete users[idx].password;}}
+    if(idx>-1){users[idx].name=name;users[idx].contact=contact;users[idx].username=username;users[idx].role=role;if(pass&&!authEmail){users[idx].passwordHash=hashPassword(pass);delete users[idx].password;}}
     Users.save(users);toast('User updated.');
   } else {
-    users.push({id:uid(),name,contact,username,passwordHash:hashPassword(pass),role,status:'active',createdAt:today()});
+    if(authEmail)users.push({id:uid(),name,contact,username,authEmail,role,status:'active',createdAt:today()});
+    else users.push({id:uid(),name,contact,username,passwordHash:hashPassword(pass),role,status:'active',createdAt:today()});
     Users.save(users);toast('User created.');
   }
   userRoleTab=role;
@@ -5035,6 +5133,7 @@ function updateHeroMemberCount(){
 }
 (function(){
   seedData();
+  showInitialSetupIfNeeded();
   updateHeroMemberCount();
   initHeroStats();
   initReveals();

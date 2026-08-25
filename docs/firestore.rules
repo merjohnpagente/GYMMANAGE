@@ -1,0 +1,39 @@
+rules_version = '2';
+// ============================================================
+// FitCore GMS — Firestore Security Rules
+// Paste into: Firebase console → Firestore → Rules → Publish
+// ============================================================
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // One-time admin bootstrap flag: readable by all (so the app
+    // knows setup is done), creatable only once, never editable after.
+    match /meta/{doc} {
+      allow read: if true;
+      allow create: if !exists(/databases/$(database)/documents/meta/config);
+      allow update, delete: if false;
+    }
+
+    // App collections: any signed-in user may read;
+    // writes require authentication too (roles enforced in app logic).
+    match /{collection}/{doc} {
+      allow read: if request.auth != null
+        && collection in ['users','members','payments','sessions','plans',
+                          'attendance','walkins','notifications','messages',
+                          'announcements','settings','activitylog'];
+      allow create, update: if request.auth != null
+        && collection in ['users','members','payments','sessions','plans',
+                          'attendance','walkins','notifications','messages',
+                          'announcements','settings','activitylog'];
+      allow delete: if request.auth != null
+        && collection in ['users','members','payments','sessions','plans',
+                          'attendance','walkins','notifications','messages',
+                          'announcements','settings','activitylog'];
+    }
+
+    // Everything else: denied
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
