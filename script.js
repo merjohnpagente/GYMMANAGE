@@ -1,5 +1,7 @@
 ﻿// ============================= DATA LAYER =============================
-const KEY={users:'gms_users',members:'gms_members',payments:'gms_payments',sessions:'gms_sessions',plans:'gms_plans',attendance:'gms_attendance',walkins:'gms_walkins',loginAttempts:'gms_login_attempts',activityLog:'gms_activity_log'};
+const KEY={users:'gms_users',members:'gms_members',payments:'gms_payments',sessions:'gms_sessions',plans:'gms_plans',attendance:'gms_attendance',walkins:'gms_walkins',loginAttempts:'gms_login_attempts',activityLog:'gms_activity_log',settings:'gms_settings',notifications:'gms_notifications',messages:'gms_messages',announcements:'gms_announcements'};
+const PENDING_ARCHIVE_DAYS=7;
+const QR_SCAN_DUP_WINDOW_MIN=30;
 const DB={
   get:(k)=>{try{return JSON.parse(localStorage.getItem(k))||[];}catch{return[];}},
   getObj:(k)=>{try{const v=JSON.parse(localStorage.getItem(k));return(v&&typeof v==='object'&&!Array.isArray(v))?v:{};}catch{return{};}},
@@ -22,13 +24,17 @@ class Repository{
   count(){return this.all().length;}
 }
 // A tiny repository for the login-attempts map, which is stored as an object, not an array.
+// Entries carry a timestamp so lockouts expire automatically (prevents permanent self-DoS).
+const LOGIN_LOCK_MS=15*60*1000;
+// Account locks after this many failed login attempts within the lock window
+const LOGIN_MAX_ATTEMPTS=7;
 class AttemptTracker{
   constructor(storageKey){this.storageKey=storageKey;}
   all(){return DB.getObj(this.storageKey);}
   save(obj){DB.set(this.storageKey,obj);return obj;}
-  get(username){return this.all()[username]||0;}
-  register(username){const a=this.all();a[username]=(a[username]||0)+1;this.save(a);return a[username];}
-  reset(username){const a=this.all();a[username]=0;this.save(a);}
+  get(username){const e=this.all()[username];if(!e||typeof e==='number')return 0;return(Date.now()-e.last)<LOGIN_LOCK_MS?e.count:0;}
+  register(username){const a=this.all();const e=a[username];const fresh=(e&&typeof e==='object'&&(Date.now()-e.last)<LOGIN_LOCK_MS)?e.count:0;a[username]={count:fresh+1,last:Date.now()};this.save(a);return a[username].count;}
+  reset(username){const a=this.all();delete a[username];this.save(a);}
 }
 const Users=new Repository(KEY.users);
 const Members=new Repository(KEY.members);
@@ -37,8 +43,44 @@ const Sessions=new Repository(KEY.sessions);
 const Plans=new Repository(KEY.plans);
 const Attendance=new Repository(KEY.attendance);
 const Walkins=new Repository(KEY.walkins);
+const Notifications=new Repository(KEY.notifications);
+const Messages=new Repository(KEY.messages);
+const Announcements=new Repository(KEY.announcements);
+// Shared anti-spam guard: every account-creation attempt (staff/trainer/member)
+// consumes a slot. Max 5 attempts per 10 minutes per browser, then blocked.
+const SIGNUP_RATE_LIMIT=5;
+const SIGNUP_RATE_WINDOW_MS=10*60*1000;
+function signupRateCheck(){
+  const key='gms_signup_rate';
+  let count=parseInt(localStorage.getItem(key)||'0',10);
+  let first=parseInt(localStorage.getItem(key+'_t')||'0',10);
+  const now=Date.now();
+  if(!first||now-first>SIGNUP_RATE_WINDOW_MS){first=now;count=0;localStorage.setItem(key+'_t',String(now));}
+  localStorage.setItem(key,String(count+1));
+  return count>=SIGNUP_RATE_LIMIT;
+}
+function pushPendingPaymentNotif(member){
+  const plan=member.planId?Plans.one(member.planId):null;
+  const existing=Notifications.all().find(n=>n.memberId===member.id&&n.type==='pending_payment'&&n.status==='open');
+  if(existing)return existing;
+  const notif={id:'NTF-'+uid(),memberId:member.id,planId:member.planId||'',type:'pending_payment',status:'open',createdAt:member.createdAt||today()};
+  Notifications.add(notif);
+  return notif;
+}
+function resolveNotifsForMember(memberId){
+  const all=Notifications.all();
+  let changed=false;
+  all.forEach(n=>{if(n.memberId===memberId&&n.status==='open'){n.status='resolved';changed=true;}});
+  if(changed)Notifications.save(all);
+}
+function openPendingNotifs(){return Notifications.all().filter(n=>n.type==='pending_payment'&&n.status==='open');}
 const ActivityLog=new Repository(KEY.activityLog);
 const LoginAttempts=new AttemptTracker(KEY.loginAttempts);
+const Settings=new Repository(KEY.settings);
+function getWalkinFee(){return Number((Settings.one('walkin')||{}).fee)||100;}
+function setWalkinFee(fee){Settings.save([{id:'walkin',fee:Number(fee)}]);}
+function formatPeso(n){return Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
+function syncStaticWalkinPrice(){document.querySelectorAll('.js-walkin-price').forEach(el=>{el.textContent='₱'+getWalkinFee().toLocaleString()+'/day';});document.querySelectorAll('.js-walkin-price-prose').forEach(el=>{el.textContent='₱'+getWalkinFee().toLocaleString();});}
 
 // ============================= DOMAIN / ENTITY CLASSES =============================
 // Lightweight classes that wrap the plain data objects and carry the business rules that used
@@ -69,6 +111,7 @@ class Member{
   // expiry-comparison logic that used to be repeated across render functions.
   computeStatus(){
     if(this.status==='Archived')return'Archived';
+    if(this.status==='pending_payment')return'pending_payment';
     const d=this.daysUntilExpiry;
     if(d<0)return'Expired';
     if(d<=3)return this.status==='Suspended'?'Suspended':'Expiring Soon';
@@ -93,27 +136,50 @@ class AuthService{
   setSession(u){sessionStorage.setItem('gms_session',JSON.stringify(u));}
   clearSession(){sessionStorage.removeItem('gms_session');}
   findByUsername(username){return Users.all().find(x=>x.username===username);}
-  // Returns {ok:true,user} or {ok:false,error}
+// Returns {ok:true,user} or {ok:false,error}
   login(username,password){
     if(!username||!password)return{ok:false,error:'Please fill in all required fields.'};
-    if(LoginAttempts.get(username)>=3)return{ok:false,error:'Account locked. Please contact the administrator.'};
+    if(LoginAttempts.get(username)>=LOGIN_MAX_ATTEMPTS)return{ok:false,error:'Account locked. Too many failed attempts — try again in 15 minutes.'};
     const found=this.findByUsername(username);
     if(found&&found.status==='locked')return{ok:false,error:'Account locked. Please contact the administrator.'};
     if(found&&found.status==='pending')return{ok:false,error:'Your account is pending admin approval. Please wait.'};
-    if(!found||found.password!==password){
+    if(found){
+      const ok=found.passwordHash?verifyPassword(password,found.passwordHash):(typeof found.password==='string'&&found.password===password);
+      if(ok){
+        // Upgrade legacy plaintext passwords to salted hashes on successful login
+        if(!found.passwordHash){found.passwordHash=hashPassword(password);delete found.password;Users.save(Users.all());}
+        else if(found.passwordHash.startsWith('h1$')){Users.update(found.id,{passwordHash:hashPassword(password)});}
+        LoginAttempts.reset(username);
+        this.setSession(found);
+        return{ok:true,user:found};
+      }
       const attempts=LoginAttempts.register(username);
-      return{ok:false,error:attempts>=3?'Account locked. Please contact the administrator.':'Invalid username or password.'};
+      return{ok:false,error:attempts>=LOGIN_MAX_ATTEMPTS?'Account locked. Too many failed attempts — try again in 15 minutes.':'Invalid username or password.'};
     }
-    LoginAttempts.reset(username);
-    this.setSession(found);
-    return{ok:true,user:found};
+    // Member accounts live in the Members table and log in with username + password
+    const member=Members.all().find(m=>m.username&&m.username.toLowerCase()===username.toLowerCase());
+    if(member&&verifyPassword(password,member.passwordHash)){
+      if(member.status==='Archived')return{ok:false,error:'Your account has been archived. Please contact the front desk.'};
+      // Upgrade legacy h1$ (FNV) hashes to salted SHA-256 on successful login
+      if(member.passwordHash&&member.passwordHash.startsWith('h1$'))Members.update(member.id,{passwordHash:hashPassword(password)});
+      LoginAttempts.reset(username);
+      const sess={id:member.id,email:member.email||'',username:member.username,name:member.name,contact:member.contact,role:'member',memberId:member.id,status:member.status};
+      this.setSession(sess);
+      return{ok:true,user:sess};
+    }
+    const attempts=LoginAttempts.register(username);
+    return{ok:false,error:attempts>=LOGIN_MAX_ATTEMPTS?'Account locked. Too many failed attempts — try again in 15 minutes.':'Invalid username or password.'};
   }
   logout(){this.clearSession();}
   register(role,payload){
     const users=Users.all();
     if(users.find(x=>x.username===payload.username))return{ok:false,error:'Username already taken. Please choose a different username.'};
     const status=role==='staff'?'pending':'active';
-    const user={id:uid(),role,status,createdAt:today(),...payload};
+    const {password,...rest}=payload;
+    // Sanitize free-text fields at write time (defense in depth against stored XSS)
+    ['name','contact','username','coachName','bio'].forEach(k=>{if(typeof rest[k]==='string')rest[k]=sanitizeText(rest[k]);});
+    const user={id:uid(),role,status,createdAt:today(),...rest};
+    if(password)user.passwordHash=hashPassword(password);
     Users.add(user);
     return{ok:true,user};
   }
@@ -121,27 +187,203 @@ class AuthService{
 const Auth=new AuthService();
 
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6);}
-function nextId(key,prefix){const items=DB.get(key);const num=(items.length+1).toString().padStart(4,'0');return `${prefix}-${num}`;}
+function nextId(key,prefix){
+  const items=DB.get(key);
+  const re=new RegExp('^'+prefix+'-0*(\\d+)$');
+  let max=0;
+  for(const it of items){
+    if(!it||typeof it.id!=='string')continue;
+    const m=it.id.match(re);
+    if(m)max=Math.max(max,parseInt(m[1],10));
+  }
+  return `${prefix}-${(max+1).toString().padStart(4,'0')}`;
+}
+function nextMemberId(){const n=Members.all().filter(m=>m.status!=='Archived').length;return 'MEM-'+String(n+1).padStart(4,'0');}
 function addDays(dateStr,days){const d=new Date(dateStr);d.setDate(d.getDate()+days);return d.toISOString().split('T')[0];}
 function addMonths(dateStr,months){const d=new Date(dateStr);d.setMonth(d.getMonth()+months);return d.toISOString().split('T')[0];}
 function today(){return new Date().toISOString().split('T')[0];}
 function daysUntil(dateStr){const ms=new Date(dateStr)-new Date(today());return Math.ceil(ms/(1000*60*60*24));}
+// Legacy demo-grade hash (FNV-1a 32-bit). Kept ONLY to verify/upgrade records hashed before the
+// salted-SHA-256 upgrade; never used for new hashes.
+function hashStr(str){
+  let h=0x811c9dc5;
+  for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,0x01000193);}
+  return (h>>>0).toString(16).padStart(8,'0');
+}
+// ============================= CRYPTO (sync, browser-safe) =============================
+// Pure-JS SHA-256 so password hashing and QR signatures work synchronously in the browser
+// and in Node test harnesses. Standard FIPS-180-4 algorithm.
+function sha256hex(msg){
+  const K=[0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+  function rotr(x,n){return (x>>>n)|(x<<(32-n));}
+  let H=[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+  const bytes=[];
+  for(let i=0;i<msg.length;i++){
+    const c=msg.charCodeAt(i);
+    if(c<128)bytes.push(c);
+    else if(c<2048)bytes.push(0xc0|(c>>6),0x80|(c&63));
+    else bytes.push(0xe0|(c>>12),0x80|((c>>6)&63),0x80|(c&63));
+  }
+  const bitLen=bytes.length*8;
+  bytes.push(0x80);
+  while(bytes.length%64!==56)bytes.push(0);
+  for(let i=7;i>=0;i--)bytes.push((bitLen/Math.pow(2,8*i))&255);
+  for(let o=0;o<bytes.length;o+=64){
+    const w=new Array(64);
+    for(let i=0;i<16;i++)w[i]=(bytes[o+i*4]<<24)|(bytes[o+i*4+1]<<16)|(bytes[o+i*4+2]<<8)|bytes[o+i*4+3];
+    for(let i=16;i<64;i++){
+      const s0=rotr(w[i-15],7)^rotr(w[i-15],18)^(w[i-15]>>>3);
+      const s1=rotr(w[i-2],17)^rotr(w[i-2],19)^(w[i-2]>>>10);
+      w[i]=(w[i-16]+s0+w[i-7]+s1)>>>0;
+    }
+    let a=H[0],b=H[1],c=H[2],d=H[3],e=H[4],f=H[5],g=H[6],h=H[7];
+    for(let i=0;i<64;i++){
+      const S1=rotr(e,6)^rotr(e,11)^rotr(e,25);
+      const ch=(e&f)^(~e&g);
+      const t1=(h+S1+ch+K[i]+w[i])>>>0;
+      const S0=rotr(a,2)^rotr(a,13)^rotr(a,22);
+      const maj=(a&b)^(a&c)^(b&c);
+      const t2=(S0+maj)>>>0;
+      h=g;g=f;f=e;e=(d+t1)>>>0;d=c;c=b;b=a;a=(t1+t2)>>>0;
+    }
+    H[0]=(H[0]+a)>>>0;H[1]=(H[1]+b)>>>0;H[2]=(H[2]+c)>>>0;H[3]=(H[3]+d)>>>0;
+    H[4]=(H[4]+e)>>>0;H[5]=(H[5]+f)>>>0;H[6]=(H[6]+g)>>>0;H[7]=(H[7]+h)>>>0;
+  }
+  return H.map(x=>x.toString(16).padStart(8,'0')).join('');
+}
+// Salted, iterated password hashing (h2$salt$digest). 1000 SHA-256 rounds with a per-user
+// random salt: kills rainbow tables and cross-account correlation. Kept synchronous so the
+// whole app (and tests) stays synchronous; a real deployment should use bcrypt/argon2 server-side.
+const PW_ITER=1000;
+function hashPassword(pw){
+  const salt=Math.random().toString(36).slice(2,12)+Date.now().toString(36);
+  let d=sha256hex(salt+'|'+pw);
+  for(let i=0;i<PW_ITER-1;i++)d=sha256hex(d+salt);
+  return 'h2$'+salt+'$'+d;
+}
+function verifyPassword(pw,stored){
+  if(!stored||!pw)return false;
+  if(stored.startsWith('h2$')){
+    const parts=stored.split('$');
+    if(parts.length!==3)return false;
+    const salt=parts[1];
+    let d=sha256hex(salt+'|'+pw);
+    for(let i=0;i<PW_ITER-1;i++)d=sha256hex(d+salt);
+    return d===parts[2];
+  }
+  if(stored.startsWith('h1$'))return stored==='h1$'+hashStr(pw+'::fitcore');
+  return false;
+}
+function qrSig(memberId,dateStr,nonce,secret){
+  return sha256hex(memberId+'|'+dateStr+'|'+nonce+'|'+secret).slice(0,16);
+}
+function getQrSecret(){
+  const s=Settings.one('qr');
+  if(s&&s.secret)return s.secret;
+  const secret=sha256hex('fc-secret-'+Date.now()+'-'+Math.random()).slice(0,32);
+  Settings.save([...Settings.all().filter(x=>x.id!=='qr'),{id:'qr',secret}]);
+  return secret;
+}
+function newQrNonce(memberId){return sha256hex(memberId+'|'+Date.now()+'-'+Math.random()).slice(0,8);}
+function getMemberNonce(memberId){
+  const m=Members.one(memberId);
+  if(!m)return'';
+  if(!m.qrNonce){m.qrNonce=newQrNonce(memberId);Members.update(memberId,{qrNonce:m.qrNonce});}
+  return m.qrNonce;
+}
+function qrTokenFor(memberId,dateStr){
+  const d=dateStr||today();
+  const sig=qrSig(memberId,d,getMemberNonce(memberId),getQrSecret());
+  return 'FCG.'+memberId+'.'+d.replace(/-/g,'')+'.'+sig;
+}
+function parseQrToken(token){
+  const parts=String(token||'').trim().split('.');
+  if(parts.length!==4||parts[0]!=='FCG')return null;
+  const memberId=parts[1],dateNum=parts[2],sig=parts[3];
+  if(!/^\d{8}$/.test(dateNum))return null;
+  const dateStr=dateNum.slice(0,4)+'-'+dateNum.slice(4,6)+'-'+dateNum.slice(6,8);
+  const expected=qrSig(memberId,dateStr,getMemberNonce(memberId),getQrSecret());
+  if(sig!==expected)return null;
+  return{memberId,dateStr};
+}
+function renderQrTo(el,token,cell=5){
+  if(!el)return;
+  el.innerHTML='';
+  try{
+    const qr=qrcode(0,'M');
+    qr.addData(token);
+    qr.make();
+    el.innerHTML=qr.createImgTag(cell,cell*2);
+    const img=el.querySelector('img');
+    if(img){img.style.imageRendering='pixelated';img.style.display='block';}
+  }catch(e){el.innerHTML='<div style="color:var(--red);font-size:12px">QR generation failed</div>';}
+}
 function formatDate(dateStr){if(!dateStr)return'—';const d=new Date(dateStr);return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});}
 function formatDateTime(dateStr){if(!dateStr)return'—';const d=new Date(dateStr);return d.toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'});}
 function formatFullDate(dateStr){const d=new Date(dateStr);return d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});}
 
+// ============================= XSS DEFENSE =============================
+// Escape user-controlled strings before injecting into innerHTML. All data that flows
+// from Members/Users/Payments/Walkins/Plans into HTML must pass through esc().
+function esc(s){
+  return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function onImagePick(input,urlField,previewId,clearId){
+  const f=input.files&&input.files[0];
+  if(!f)return;
+  if(!/^image\//.test(f.type)){toast('Please select an image file.','error');return;}
+  if(f.size>300000){toast('Please use an image smaller than 300KB.','error');return;}
+  const r=new FileReader();
+  r.onload=null;
+  r.onload=function(ev){
+    const data=ev.target.result;
+    const u=document.getElementById(urlField);if(u)u.value=data;
+    const p=document.getElementById(previewId);if(p){p.src=data;p.style.display='block';}
+    const c=document.getElementById(clearId);if(c)c.style.display='inline-flex';
+  };
+  r.readAsDataURL(f);
+  input.value='';
+}
+function removeImage(urlField,previewId,clearId){
+  const u=document.getElementById(urlField);if(u)u.value='';
+  const p=document.getElementById(previewId);if(p){p.src='';p.style.display='none';}
+  const c=document.getElementById(clearId);if(c)c.style.display='none';
+}
+// Strip HTML-significant characters and control chars at WRITE time (defense in depth).
+// Newlines/tabs are preserved so multi-line plan benefits and notes stay intact.
+function sanitizeText(v){
+  return String(v==null?'':v).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g,'').replace(/[<>]/g,'').trim();
+}
+// Upgrade records saved by pre-v14 seeds: convert plaintext staff passwords to salted hashes.
+// Member h1$ (FNV) hashes are upgraded lazily on successful login (plaintext is never recoverable).
+function migrateLegacyPasswords(){
+  const users=Users.all();
+  let changed=false;
+  users.forEach(u=>{
+    if(!u.passwordHash&&typeof u.password==='string'&&u.password){
+      u.passwordHash=hashPassword(u.password);
+      delete u.password;
+      changed=true;
+    }
+  });
+  if(changed)Users.save(users);
+}
+
 // ============================= SEED DATA =============================
 function seedData(){
-  if(localStorage.getItem('gms_seeded')==='11')return;
+  if(localStorage.getItem('gms_seeded')==='13'){
+    migrateLegacyPasswords();
+    return;
+  }
   // Clear all existing data for fresh start
   Object.values(KEY).forEach(k=>localStorage.removeItem(k));
   localStorage.removeItem('gms_login_attempts');
   LoginAttempts.save({});
-  // Users (keep login accounts)
+  // Users (keep login accounts) — passwords stored ONLY as salted hashes, never plaintext
   const users=[
-    {id:'u1',name:'System Admin',username:'admin',password:'admin123',role:'admin',status:'active',contact:'09150435696',createdAt:today()},
-    {id:'u2',name:'Marie Santos',username:'staff',password:'staff123',role:'staff',status:'active',createdAt:today()},
-    {id:'u3',name:'Coach Ryan',username:'trainer',password:'trainer123',role:'trainer',status:'active',coachName:'Coach Ryan',specializations:['Personal Training','Strength Training','HIIT'],availableDays:['Mon','Tue','Wed','Thu','Fri','Sat'],availableFrom:'6:00 AM',availableTo:'9:00 PM',bio:'Certified strength coach with 8+ years of experience. Specializes in personalized programs, form correction, and helping members hit PRs safely.',createdAt:today()}
+    {id:'u1',name:'System Admin',username:'admin',passwordHash:hashPassword('admin123'),role:'admin',status:'active',contact:'09150435696',createdAt:today()},
+    {id:'u2',name:'Marie Santos',username:'staff',passwordHash:hashPassword('staff123'),role:'staff',status:'active',createdAt:today()},
+    {id:'u3',name:'Coach Ryan',username:'trainer',passwordHash:hashPassword('trainer123'),role:'trainer',status:'active',coachName:'Coach Ryan',specializations:['Personal Training','Strength Training','HIIT'],availableDays:['Mon','Tue','Wed','Thu','Fri','Sat'],availableFrom:'6:00 AM',availableTo:'9:00 PM',bio:'Certified strength coach with 8+ years of experience. Specializes in personalized programs, form correction, and helping members hit PRs safely.',createdAt:today()}
   ];
   Users.save(users);
   // Plans (keep default plans)
@@ -154,11 +396,11 @@ function seedData(){
   // Seed 5 members added by staff (Marie Santos)
   const t=today();
   const seedMembers=[
-    {id:'MEM-0001',name:'Stephen Hugo',contact:'09171000001',age:'28',sex:'Male',planId:'pl2',startDate:addDays(t,-25),expiryDate:addDays(t,5),address:'',ecName:'',ecNum:'',notes:'',status:'Expiring Soon',createdAt:addDays(t,-25),createdBy:'Marie Santos',createdByUsername:'staff',createdByRole:'staff'},
-    {id:'MEM-0002',name:'Mike Delavega',contact:'09171000002',age:'32',sex:'Male',planId:'pl1',startDate:addDays(t,-28),expiryDate:addDays(t,2),address:'',ecName:'',ecNum:'',notes:'',status:'Expiring Soon',createdAt:addDays(t,-28),createdBy:'Marie Santos',createdByUsername:'staff',createdByRole:'staff'},
-    {id:'MEM-0003',name:'Christan Aranez',contact:'09171000003',age:'25',sex:'Male',planId:'pl3',startDate:addDays(t,-88),expiryDate:addDays(t,2),address:'',ecName:'',ecNum:'',notes:'',status:'Expiring Soon',createdAt:addDays(t,-88),createdBy:'Marie Santos',createdByUsername:'staff',createdByRole:'staff'},
-    {id:'MEM-0004',name:'Sam Ervin Cuajor',contact:'09171000004',age:'30',sex:'Male',planId:'pl1',startDate:addDays(t,-30),expiryDate:addDays(t,-1),address:'',ecName:'',ecNum:'',notes:'',status:'Expired',createdAt:addDays(t,-30),createdBy:'Marie Santos',createdByUsername:'staff',createdByRole:'staff'},
-    {id:'MEM-0005',name:'Janwell Nacario',contact:'09171000005',age:'27',sex:'Male',planId:'pl2',startDate:addDays(t,-29),expiryDate:addDays(t,1),address:'',ecName:'',ecNum:'',notes:'',status:'Expiring Soon',createdAt:addDays(t,-29),createdBy:'Marie Santos',createdByUsername:'staff',createdByRole:'staff'}
+    {id:'MEM-0001',name:'Stephen Hugo',contact:'09171000001',age:'28',sex:'Male',planId:'pl2',startDate:addDays(t,-25),expiryDate:addDays(t,5),address:'',ecName:'',ecNum:'',notes:'',status:'Expiring Soon',createdAt:addDays(t,-25),createdBy:'Marie Santos',createdByUsername:'staff',createdByRole:'staff',bgCheckStatus:'Cleared',bgCheckDate:addDays(t,-25),bgCheckBy:'Marie Santos',bgCheckNotes:''},
+    {id:'MEM-0002',name:'Mike Delavega',contact:'09171000002',age:'32',sex:'Male',planId:'pl1',startDate:addDays(t,-28),expiryDate:addDays(t,2),address:'',ecName:'',ecNum:'',notes:'',status:'Expiring Soon',createdAt:addDays(t,-28),createdBy:'Marie Santos',createdByUsername:'staff',createdByRole:'staff',bgCheckStatus:'Cleared',bgCheckDate:addDays(t,-28),bgCheckBy:'Marie Santos',bgCheckNotes:''},
+    {id:'MEM-0003',name:'Christan Aranez',contact:'09171000003',age:'25',sex:'Male',planId:'pl3',startDate:addDays(t,-88),expiryDate:addDays(t,2),address:'',ecName:'',ecNum:'',notes:'',status:'Expiring Soon',createdAt:addDays(t,-88),createdBy:'Marie Santos',createdByUsername:'staff',createdByRole:'staff',bgCheckStatus:'Cleared',bgCheckDate:addDays(t,-88),bgCheckBy:'Marie Santos',bgCheckNotes:''},
+    {id:'MEM-0004',name:'Sam Ervin Cuajor',contact:'09171000004',age:'30',sex:'Male',planId:'pl1',startDate:addDays(t,-30),expiryDate:addDays(t,-1),address:'',ecName:'',ecNum:'',notes:'',status:'Expired',createdAt:addDays(t,-30),createdBy:'Marie Santos',createdByUsername:'staff',createdByRole:'staff',bgCheckStatus:'Cleared',bgCheckDate:addDays(t,-30),bgCheckBy:'Marie Santos',bgCheckNotes:''},
+    {id:'MEM-0005',name:'Janwell Nacario',contact:'09171000005',age:'27',sex:'Male',planId:'pl2',startDate:addDays(t,-29),expiryDate:addDays(t,1),address:'',ecName:'',ecNum:'',notes:'',status:'Expiring Soon',createdAt:addDays(t,-29),createdBy:'Marie Santos',createdByUsername:'staff',createdByRole:'staff',bgCheckStatus:'Cleared',bgCheckDate:addDays(t,-29),bgCheckBy:'Marie Santos',bgCheckNotes:''}
   ];
   // Seed initial payments for these members
   const seedPayments=[
@@ -169,11 +411,17 @@ function seedData(){
     {id:'PAY-0005',memberId:'MEM-0005',memberName:'Janwell Nacario',planId:'pl2',planName:'Standard',amount:900,date:addDays(t,-29),newExpiry:addDays(t,1),method:'Cash',notes:'',recordedBy:'Marie Santos',recordedByUsername:'staff',status:'Paid',createdAt:addDays(t,-29)}
   ];
   Members.save(seedMembers);
+  // Seed 1 self-registered member awaiting payment (demo of the new onboarding flow)
+  const pendingMember={id:'MEM-0006',name:'Nicole Ramos',username:'nicole',contact:'09171000006',email:'nicole.ramos@example.com',passwordHash:hashPassword('member123'),planId:'pl2',status:'pending_payment',startDate:'',expiryDate:'',planStart:'',qrToken:'',age:'',sex:'',address:'',ecName:'',ecNum:'',notes:'',createdAt:addDays(t,-1),createdBy:'Self',createdByUsername:'',createdByRole:'member'};
+  Members.add(pendingMember);
+  pushPendingPaymentNotif(pendingMember);
+  getQrSecret();
   Payments.save(seedPayments);
   Sessions.save([]);
   Walkins.save([]);
   Attendance.save([]);
-  localStorage.setItem('gms_seeded','11');
+  setWalkinFee(100);
+  localStorage.setItem('gms_seeded','14');
 }
 
 // ============================= AUTH =============================
@@ -189,6 +437,7 @@ function showLandingSection(section, linkEl) {
     const el = document.getElementById('landing' + s.charAt(0).toUpperCase() + s.slice(1));
     if(el) el.style.display = 'none';
   });
+  const mq=document.querySelector('.marquee');if(mq)mq.style.display=section==='home'?'block':'none';
   const extraEl = document.getElementById('landingExploreExtra');
   if(extraEl) extraEl.style.display = 'none';
   const target = document.getElementById('landing' + section.charAt(0).toUpperCase() + section.slice(1));
@@ -216,14 +465,15 @@ function doLogin(){
 function confirmLogout(){
   if(currentUser){
     const roleMeta={
-      admin:{label:'Admin',bg:'rgba(114,133,255,.2)',color:'var(--orange)'},
-      staff:{label:'Staff',bg:'rgba(114,133,255,.2)',color:'#aab5ff'},
-      trainer:{label:'Trainer',bg:'rgba(52,211,153,.15)',color:'var(--green)'}
+      admin:{label:'Admin',bg:'rgba(179,188,181,.2)',color:'var(--orange)'},
+      staff:{label:'Staff',bg:'rgba(179,188,181,.2)',color:'#d7ddd8'},
+      trainer:{label:'Trainer',bg:'rgba(127,250,136,.15)',color:'var(--green)'},
+      member:{label:'Member',bg:'rgba(251,191,36,.15)',color:'var(--gold)'}
     };
     const rm=roleMeta[currentUser.role]||{label:currentUser.role,bg:'rgba(255,255,255,.1)',color:'var(--gray-300)'};
     openConfirm(
       'Confirm Logout',
-      '<div style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:8px 0"><div style="font-size:36px">🚪</div><div style="font-size:14px;color:var(--gray-300);text-align:center;line-height:1.6">You are logged in as <strong style="color:var(--white)">'+currentUser.name+'</strong> <span style="font-size:10px;font-weight:800;padding:2px 8px;border-radius:4px;background:'+rm.bg+';color:'+rm.color+';margin-left:6px;text-transform:uppercase">'+rm.label+'</span><br>Are you sure you want to log out?</div></div>',
+      '<div style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:8px 0"><div style="font-size:36px">🚪</div><div style="font-size:14px;color:var(--gray-300);text-align:center;line-height:1.6">You are logged in as <strong style="color:var(--white)">'+esc(currentUser.name)+'</strong> <span style="font-size:10px;font-weight:800;padding:2px 8px;border-radius:4px;background:'+rm.bg+';color:'+rm.color+';margin-left:6px;text-transform:uppercase">'+esc(rm.label)+'</span><br>Are you sure you want to log out?</div></div>',
       doLogout,
       '🚪 Yes, Log Out',
       'btn-danger'
@@ -234,6 +484,8 @@ function confirmLogout(){
 }
 function doLogout(){
   clearSession();currentUser=null;
+  if(_pendingPoll){clearInterval(_pendingPoll);_pendingPoll=null;}
+  const pg=document.getElementById('pendingGate');if(pg)pg.style.display='none';
   document.getElementById('app').classList.remove('active');
   document.getElementById('loginPage').style.display='block';
   document.getElementById('landingNav').style.display='flex';
@@ -248,7 +500,7 @@ function resetRegisterForm(){
   ['regName','regContact','regUser','regPass','regPass2','regCoachName','regBio'].forEach(function(id){const el=document.getElementById(id);if(el)el.value='';});
   const roleEl=document.getElementById('regRole');if(roleEl)roleEl.value='';
   // Reset role cards
-  ['roleCardStaff','roleCardTrainer'].forEach(function(id){const c=document.getElementById(id);if(c){c.style.borderColor='var(--navy-600)';c.style.background='var(--navy-700)';}});
+  ['roleCardStaff','roleCardTrainer','roleCardMember'].forEach(function(id){const c=document.getElementById(id);if(c){c.style.borderColor='rgba(255,255,255,.16)';c.style.background='var(--navy-700)';}});
   document.querySelectorAll('#regSpecGrid input[type=checkbox]').forEach(function(cb){cb.checked=false;});
   document.querySelectorAll('#regAvailDays input[type=checkbox]').forEach(function(cb){cb.checked=false;});
   const fromEl=document.getElementById('regAvailFrom');if(fromEl)fromEl.value='';
@@ -260,28 +512,25 @@ function resetRegisterForm(){
 }
 function selectRegRole(role){
   document.getElementById('regRole').value=role;
-  const staffCard=document.getElementById('roleCardStaff');
-  const trainerCard=document.getElementById('roleCardTrainer');
-  if(role==='staff'){
-    staffCard.style.borderColor='var(--orange)';staffCard.style.background='rgba(114,133,255,.1)';
-    trainerCard.style.borderColor='var(--navy-600)';trainerCard.style.background='var(--navy-700)';
-  } else {
-    trainerCard.style.borderColor='var(--orange)';trainerCard.style.background='rgba(114,133,255,.1)';
-    staffCard.style.borderColor='var(--navy-600)';staffCard.style.background='var(--navy-700)';
-  }
+  const cards={staff:document.getElementById('roleCardStaff'),trainer:document.getElementById('roleCardTrainer'),member:document.getElementById('roleCardMember')};
+  Object.keys(cards).forEach(r=>{
+    const c=cards[r];
+    if(c){c.style.borderColor=(r===role)?'var(--orange)':'rgba(255,255,255,.16)';c.style.background=(r===role)?'rgba(179,188,181,.1)':'var(--navy-700)';}
+  });
   document.getElementById('regError').style.display='none';
 }
 function regStep1Next(){
   const role=document.getElementById('regRole').value;
   const err=document.getElementById('regError');
-  if(!role){err.textContent='Please select Staff or Trainer to continue.';err.style.display='block';return;}
+  if(!role){err.textContent='Please select Staff, Trainer or Member to continue.';err.style.display='block';return;}
   err.style.display='none';
+  if(role==='member'){showRegTab('member');return;}
   document.getElementById('regStep1').style.display='none';
   document.getElementById('regStep2').style.display='block';
   const sub=document.getElementById('regStep2Sub');
   if(sub)sub.textContent=role==='trainer'?'Trainer Registration — Step 2 of 3':'Staff Registration — Step 2 of 2';
   const bar=document.getElementById('regStepBar2');
-  if(bar)bar.style.background=role==='trainer'?'rgba(114,133,255,.3)':'var(--orange)';
+  if(bar)bar.style.background=role==='trainer'?'rgba(179,188,181,.3)':'var(--orange)';
   const btn=document.getElementById('regStep2Btn');
   if(btn)btn.textContent=role==='trainer'?'Next: Trainer Profile →':'Submit for Admin Approval';
 }
@@ -316,18 +565,211 @@ function regStep2Next(){
     doRegister();
   }
 }
-function showLogin(){document.getElementById('loginForm').style.display='block';document.getElementById('registerForm').style.display='none';document.getElementById('loginError').style.display='none';}
+function showLogin(){document.getElementById('loginForm').style.display='block';document.getElementById('registerForm').style.display='none';document.getElementById('loginError').style.display='none';const ms=document.getElementById('memberSignup');if(ms)ms.style.display='none';const lc=document.getElementById('loginCard');if(lc)lc.style.display='block';}
 function showRegister(){
   resetRegisterForm();
   document.getElementById('loginForm').style.display='none';
-  document.getElementById('registerForm').style.display='block';
-  document.getElementById('regStep1').style.display='block';
-  document.getElementById('regStep2').style.display='none';
-  document.getElementById('regStep3').style.display='none';
+  showRegTab('staff');
+}
+function regGoMember(){
+  showRegTab('member');
+}
+function showRegTab(tab){
+  const isMember=tab==='member';
+  const ms=document.getElementById('memberSignup');
+  const rf=document.getElementById('registerForm');
+  const lc=document.getElementById('loginCard');if(lc)lc.style.display=isMember?'none':'block';
+  if(ms)ms.style.display=isMember?'block':'none';
+  if(rf){
+    rf.style.display=isMember?'none':'block';
+    if(!isMember){
+      document.getElementById('regStep1').style.display='block';
+      document.getElementById('regStep2').style.display='none';
+      document.getElementById('regStep3').style.display='none';
+      const e=document.getElementById('regError');if(e)e.style.display='none';
+    }
+  }
+  const le=document.getElementById('loginError');if(le)le.style.display='none';
+  const re=document.getElementById('regError');if(re)re.style.display='none';
+  if(isMember){
+    resetMemberSignupForm();
+    populateMsPlanSelect(_memberSignupPlanId);
+    const e=document.getElementById('msError');if(e)e.style.display='none';
+    const s=document.getElementById('msSuccess');if(s)s.style.display='none';
+    iconize(document.getElementById('memberSignup'));
+  }
+}
+// ============================= MEMBER SELF-SIGNUP (Guest → Member) =============================
+let _memberSignupPlanId=null;let _msPlanPicked=null;
+function populateMsPlanSelect(selectedId){
+  const sel=document.getElementById('msPlanSelect');
+  const opts=document.getElementById('msPlanOptions');
+  if(!sel||!opts)return;
+  const plans=Plans.all().filter(p=>p.status==='Active');
+  sel.innerHTML=plans.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  const pick=plans.find(p=>p.id===selectedId)?selectedId:(plans.length?plans[0].id:'');
+  sel.value=pick;_msPlanPicked=pick;
+  opts.innerHTML=plans.map(p=>{
+    const price=Number(p.price).toLocaleString();
+    const dur=p.duration===1?'1 month':p.duration+' months';
+    const sess=p.sessions==='Unlimited'?'Unlimited sessions':p.sessions+' sessions';
+    const feats=(p.benefits||p.perks||'').split(/\n|,/).map(b=>b.trim()).filter(Boolean).map(b=>`<span class="ms-plan-opt-feat">${esc(b)}</span>`).join('');
+    const isSel=p.id===pick;
+    return `<div class="ms-plan-opt${isSel?' selected':''}" id="msPlanOpt-${p.id}" onclick="pickMsPlan('${p.id}')">
+      <div class="ms-plan-opt-head">
+        <div>
+          <div class="ms-plan-opt-name">${esc(p.name)}</div>
+          <div class="ms-plan-opt-sub">${dur} · ${sess}</div>
+        </div>
+        <div class="ms-plan-opt-right">
+          <div class="ms-plan-opt-price">₱${price}<span class="ms-plan-opt-per">${p.duration===1?'/mo':'/'+p.duration+'mo'}</span></div>
+          <div class="ms-plan-opt-check">✓</div>
+        </div>
+      </div>
+      ${isSel&&feats?`<div class="ms-plan-opt-feats">${feats}</div>`:''}
+    </div>`;}).join('');
+  updateMsPlanCard();
+}
+function pickMsPlan(planId){
+  populateMsPlanSelect(planId);
+}
+function updateMsPlanCard(){
+  const sel=document.getElementById('msPlanSelect');
+  const plan=sel?Plans.one(sel.value):null;
+  const nameEl=document.getElementById('msPlanName');if(nameEl)nameEl.textContent=plan?plan.name:'—';
+  const priceEl=document.getElementById('msPlanPrice');if(priceEl)priceEl.textContent=plan?'₱'+Number(plan.price).toLocaleString()+(plan.duration===1?'/mo':'/'+plan.duration+'mo'):'—';
+  const durEl=document.getElementById('msPlanDur');if(durEl)durEl.textContent=plan?(plan.duration+' month(s) · '+(plan.sessions==='Unlimited'?'Unlimited sessions':plan.sessions+' sessions')):'';
+  const perksEl=document.getElementById('msPlanPerks');if(perksEl)perksEl.innerHTML=plan?(plan.benefits||plan.perks||'').split(/\n|,/).map(b=>b.trim()).filter(Boolean).map(b=>`<li>✓ ${b}</li>`).join(''):'';
+}
+function startMemberSignup(planId){
+  _memberSignupPlanId=planId;
+  showLandingSection('register', document.querySelector('.ln-cta'));
+  showRegTab('member');
+}
+function msBackToLogin(){
+  _memberSignupPlanId=null;
+  showLogin();
+}
+function msStep1Next(){
+  const sel=document.getElementById('msPlanSelect');
+  const err=document.getElementById('msStep1Error');
+  if(!_memberSignupPlanId&&!_msPlanPicked&&!(sel&&sel.value)){
+    if(err){err.textContent='Please choose a plan to continue.';err.style.display='block';}
+    return;
+  }
+  if(err)err.style.display='none';
+  document.getElementById('msStep1').style.display='none';
+  document.getElementById('msStep2').style.display='block';
+}
+function msStep2Next(){
+  const name=document.getElementById('msName').value.trim();
+  const contact=document.getElementById('msContact').value.trim();
+  const email=document.getElementById('msEmail').value.trim();
+  const err=document.getElementById('msStep2Error');
+  if(err)err.style.display='none';
+  if(!name||!contact||!email){if(err){err.textContent='Please fill in all required fields.';err.style.display='block';}return;}
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){if(err){err.textContent='Please enter a valid email address.';err.style.display='block';}return;}
+  if(!/^09\d{9}$/.test(contact.replace(/[\s-]/g,''))){if(err){err.textContent='Please enter a valid PH mobile number (e.g. 09171234567).';err.style.display='block';}return;}
+  if(Members.all().find(m=>m.email&&m.email.toLowerCase()===email.toLowerCase())){if(err){err.textContent='Email already registered. Please log in instead.';err.style.display='block';}return;}
+  document.getElementById('msStep2').style.display='none';
+  document.getElementById('msStep3').style.display='block';
+}
+function msGoStep1(){
+  document.getElementById('msStep2').style.display='none';
+  document.getElementById('msStep3').style.display='none';
+  document.getElementById('msStep1').style.display='block';
+  const suc=document.getElementById('msSuccess');if(suc)suc.style.display='none';
+  const e=document.getElementById('msError');if(e)e.style.display='none';
+}
+function msGoStep2(){
+  document.getElementById('msStep3').style.display='none';
+  document.getElementById('msStep2').style.display='block';
+  const suc=document.getElementById('msSuccess');if(suc)suc.style.display='none';
+  const e=document.getElementById('msError');if(e)e.style.display='none';
+}
+function resetMemberSignupForm(){
+  ['msName','msUsername','msContact','msEmail','msPass','msPass2'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  ['mps1','mps2','mps3'].forEach(id=>{const b=document.getElementById(id);if(b)b.className='pw-strength-bar';});
+  const lbl=document.getElementById('msPsLabel');if(lbl)lbl.textContent='';
+  const pw=document.getElementById('msPwStrength');if(pw)pw.style.display='none';
+  if(lbl)lbl.style.display='none';
+  const s1=document.getElementById('msStep1');if(s1)s1.style.display='block';
+  const s2=document.getElementById('msStep2');if(s2)s2.style.display='none';
+  const s3=document.getElementById('msStep3');if(s3)s3.style.display='none';
+  const done=document.getElementById('msDone');if(done)done.style.display='none';
+  const se=document.getElementById('msStep1Error');if(se)se.style.display='none';
+  const se2=document.getElementById('msStep2Error');if(se2)se2.style.display='none';
+  const msuc=document.getElementById('msSuccess');if(msuc)msuc.style.display='none';
+  const merr=document.getElementById('msError');if(merr)merr.style.display='none';
+}
+function updateMsStrength(val){
+  const bars=[document.getElementById('mps1'),document.getElementById('mps2'),document.getElementById('mps3')];
+  const lbl=document.getElementById('msPsLabel');
+  const wrap=document.getElementById('msPwStrength');
+  if(wrap)wrap.style.display=val?'flex':'none';
+  if(lbl)lbl.style.display=val?'block':'none';
+  bars.forEach(b=>{b.className='pw-strength-bar'});
+  if(!val){if(lbl)lbl.textContent='';return;}
+  let score=0;
+  if(val.length>=6)score++;if(val.length>=10)score++;
+  if(/[A-Z]/.test(val)&&/[0-9]/.test(val))score++;
+  const levels=['weak','fair','strong'];
+  const labels=['Weak','Fair','Strong'];
+  for(let i=0;i<score;i++)bars[i].classList.add(levels[Math.min(score-1,2)]);
+  lbl.textContent=labels[Math.min(score-1,2)]||'';
+}
+function msStep3Next(){
+  const v=msValidateCredentials(document.getElementById('msError'));
+  if(!v)return;
+  submitMemberSignup();
+}
+function msValidateCredentials(err){
+  const name=document.getElementById('msName').value.trim();
+  const uname=document.getElementById('msUsername').value.trim();
+  const contact=document.getElementById('msContact').value.trim();
+  const email=document.getElementById('msEmail').value.trim();
+  const pass=document.getElementById('msPass').value;
+  const pass2=document.getElementById('msPass2').value;
+  const fail=msg=>{if(err){err.textContent=msg;err.style.display='block';}return null;};
+  if(!name||!uname||!contact||!email||!pass||!pass2)return fail('Please fill in all required fields.');
+  if(!/^[a-zA-Z0-9._]{3,20}$/.test(uname))return fail('Username must be 3–20 characters (letters, numbers, dots, underscores only).');
+  if(Members.all().find(m=>m.username&&m.username.toLowerCase()===uname.toLowerCase())||Users.all().find(u=>u.username&&u.username.toLowerCase()===uname.toLowerCase()))return fail('Username already taken. Please choose another.');
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return fail('Please enter a valid email address.');
+  if(!/^09\d{9}$/.test(contact.replace(/[\s-]/g,'')))return fail('Please enter a valid PH mobile number (e.g. 09171234567).');
+  if(pass.length<6)return fail('Password must be at least 6 characters.');
+  if(pass!==pass2)return fail('Passwords do not match.');
+  if(Members.all().find(m=>m.email&&m.email.toLowerCase()===email.toLowerCase()))return fail('Email already registered. Please log in instead.');
+  const normContact=contact.replace(/[\s-]/g,'');
+  if(Members.all().find(m=>m.contact===normContact))return fail('Phone number already registered. Please log in instead or use another number.');
+  return{name,uname,contact:normContact,email,pass};
+}
+function submitMemberSignup(){
+  const err=document.getElementById('msError');
+  if(signupRateCheck()){err.textContent='Too many sign-up attempts. Please wait a few minutes and try again.';err.style.display='block';return;}
+  const sel=document.getElementById('msPlanSelect');
+  const planId=_memberSignupPlanId||_msPlanPicked||(sel?sel.value:'');
+  if(!planId){err.textContent='Please choose a plan first.';err.style.display='block';return;}
+  const v=msValidateCredentials(err);
+  if(!v)return;
+  const plan=planId?Plans.one(planId):null;
+  const id=nextMemberId();
+  const member={id,name:sanitizeText(v.name),username:v.uname,contact:v.contact,email:sanitizeText(v.email),passwordHash:hashPassword(v.pass),planId,status:'pending_payment',startDate:'',expiryDate:'',planStart:'',qrToken:'',age:'',sex:'',address:'',ecName:'',ecNum:'',notes:'',createdAt:today(),createdBy:'Self',createdByUsername:v.uname,createdByRole:'member',bgCheckStatus:'Pending',bgCheckDate:'',bgCheckBy:'',bgCheckNotes:''};
+  Members.add(member);
+  pushPendingPaymentNotif(member);
+  logActivity('Signup','Member',v.name,'ID: '+id+' | Plan: '+(plan?plan.name:'')+' | Awaiting front-desk payment');
+  _memberSignupPlanId=null;
+  document.getElementById('msStep3').style.display='none';
+  const done=document.getElementById('msDone');
+  const msg=document.getElementById('msDoneMsg');
+  if(msg)msg.textContent='Account registered! Please pay at the front desk (Cash or GCash) to activate your membership. You can log in once our staff confirms your payment.';
+  if(done)done.style.display='block';
+  if(updatePendingBadge)updatePendingBadge();
 }
 function onRegRoleChange(val){}
 function doRegister(){
   const role=document.getElementById('regRole').value;
+  const rateErr=role==='trainer'?document.getElementById('regError3'):document.getElementById('regError2');
+  if(rateErr&&signupRateCheck()){rateErr.textContent='Too many sign-up attempts. Please wait a few minutes and try again.';rateErr.style.display='block';return;}
   const name=document.getElementById('regName').value.trim();
   const contact=document.getElementById('regContact').value.trim();
   const user=document.getElementById('regUser').value.trim();
@@ -371,7 +813,7 @@ function togglePw(id,btn){
   el.type=newType;
   btn.innerHTML=newType==='password'?iconSvg('eye',16):iconSvg('eyeOff',16);
   // If toggling the main password field, sync confirm password too
-  if(id==='regPass'){
+  if(id==='regPass'||id==='msPass'){
     const el2=document.getElementById('regPass2');
     if(el2){
       el2.type=newType;
@@ -395,32 +837,110 @@ function updateStrength(val){
 }
 
 // ============================= APP LOAD =============================
+let _pendingPoll=null;
+function showPendingGate(mem){
+  const archived=mem.status==='Archived';
+  const plan=mem.planId?Plans.one(mem.planId):null;
+  document.getElementById('loginPage').style.display='none';
+  const nav=document.getElementById('landingNav');if(nav)nav.style.display='none';
+  document.getElementById('app').classList.remove('active');
+  const g=document.getElementById('pendingGate');
+  if(g){
+    const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v;};
+    const ico=document.getElementById('pgIco');if(ico)ico.textContent=archived?'🗄':'⏳';
+    const t=document.getElementById('pgTitle');if(t)t.textContent=archived?'Account Archived':'Payment Pending';
+    const msg=document.getElementById('pgMsg');
+    if(msg)msg.innerHTML=archived
+      ?'Your sign-up was archived. Please visit the front desk to sign up again.'
+      :'Your account is pending. Please visit the front desk to complete your payment (<strong>Cash</strong> or <strong>GCash</strong>) and activate your account.';
+    const note=document.getElementById('pgNote');
+    if(note)note.textContent=archived?'Visit the front desk to register again.':'Your QR code unlocks automatically once payment is confirmed.';
+    set('pgName',mem.name);
+    set('pgId',mem.id);
+    set('pgPlanName',plan?plan.name:'—');
+    set('pgPlanPrice',plan?'₱'+Number(plan.price).toLocaleString()+(plan.duration===1?'/mo':'/'+plan.duration+'mo'):'—');
+    g.style.display='flex';
+  }
+  if(_pendingPoll)clearInterval(_pendingPoll);
+  _pendingPoll=setInterval(()=>{
+    const live=Members.one(mem.id);
+    if(live&&live.status!=='pending_payment'&&live.status!=='Archived'){
+      clearInterval(_pendingPoll);_pendingPoll=null;
+      loadApp();
+    }
+  },5000);
+}
+function refreshCurrentPanel(){
+  scanRenewals();updateHeroMemberCount();
+  if(_lastPanel&&_lastPanel!=='scanner')renderPanel(_lastPanel);
+  toast('Data refreshed.');
+}
+let _contentScrollTimer=null;
+function initScrollRefresh(){
+  const sc=document.querySelector('.content');
+  const btn=document.getElementById('scrollRefreshBtn');
+  if(!sc||!btn)return;
+  sc.addEventListener('scroll',()=>{
+    clearTimeout(_contentScrollTimer);
+    _contentScrollTimer=setTimeout(()=>{btn.style.display=sc.scrollTop>150?'flex':'none';},120);
+  });
+}
 function loadApp(){
+  if(currentUser&&currentUser.role==='member'){
+    const live=Members.one(currentUser.memberId||currentUser.id);
+    if(live)currentUser={...currentUser,name:live.name,email:live.email,contact:live.contact,status:live.status};
+    if(live&&(live.status==='pending_payment'||live.status==='Archived')){
+      showPendingGate(live);
+      return;
+    }
+  }
+  if(currentUser&&currentUser.role!=='member'){
+    // Re-validate staff/trainer/admin sessions against the Users table so demoted,
+    // locked or deleted accounts lose access immediately on the next load.
+    const live=Users.one(currentUser.id);
+    if(!live||live.status==='locked'||live.status==='pending'){
+      doLogout();
+      return;
+    }
+    currentUser={...currentUser,...live};
+  }
   document.getElementById('loginPage').style.display='none';
   document.getElementById('landingNav').style.display='none';
   document.getElementById('app').classList.add('active');
+  const pg=document.getElementById('pendingGate');if(pg)pg.style.display='none';
   buildSidebar();
   renderTopbar();
   scanRenewals();
   updatePendingBadge();
+  updateQueueBadge();
+  updateMessageBadge();
+  initScrollRefresh();
   navigate('dashboard');
 }
 function buildSidebar(){
   const u=currentUser;
   const av=document.getElementById('sideUserAvatar');
   av.className='user-avatar avatar-'+u.role;
-  av.textContent=initials(u.name);
+  setUserAvatar(av,u.name,userAvatarOf());
   document.getElementById('sideUserName').textContent=u.name;
   const rb=document.getElementById('sideUserRole');
   rb.className='role-badge rb-'+u.role;rb.textContent=u.role;
   const nav=document.getElementById('sideNav');
   const items=[
-    {id:'dashboard',group:'Overview',icon:`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>`,label:'Dashboard',roles:['admin','staff','trainer']},
+    {id:'dashboard',group:'Overview',icon:`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>`,label:'Dashboard',roles:['admin','staff','trainer','member']},
+    {id:'myqr',group:'Membership',icon:`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><path d="M21 21h-3v-3h3z"/></svg>`,label:'My QR Code',roles:['member']},
+    {id:'myattendance',group:'Membership',icon:`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,label:'My Attendance',roles:['member']},
     {id:'members',group:'Management',icon:`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,label:'Members',roles:['admin','staff']},
+    {id:'history',group:'Management',icon:`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><polyline points="12 7 12 12 15 14"/></svg>`,label:'Member History',roles:['admin','staff']},
+    {id:'queue',group:'Management',icon:`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,label:'Payment Queue',roles:['admin','staff'],badge:'queueBadge'},
     {id:'billing',group:'Management',icon:`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>`,label:'Billing & Payments',roles:['admin','staff']},
     {id:'walkin',group:'Management',icon:`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2"/><path d="M14 8H10l-2 6h2l1 5h2l1-5h2l-2-6z"/><path d="M9 14l-2 4"/><path d="M15 14l2 4"/></svg>`,label:'Walk-In',roles:['admin','staff']},
     {id:'schedule',group:'Operations',icon:`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`,label:'Trainer Schedule',roles:['admin','staff','trainer']},
+    {id:'myassigned',group:'Operations',icon:`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,label:'My Assigned Members',roles:['trainer']},
+    {id:'scanner',group:'Operations',icon:`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><path d="M3 8V5a2 2 0 0 1 2-2h3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/></svg>`,label:'QR Scanner',roles:['admin','staff']},
     {id:'notifications',group:'Management',icon:`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`,label:'Member Renewals',roles:['admin','staff'],badge:'notifBadge'},
+    {id:'messages',group:'Management',icon:`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,label:'Member Messages',roles:['admin','staff'],badge:'msgBadge'},
+    {id:'announcements',group:'Management',icon:`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a1 1 0 0 0 1 1h2l3 4V6L6 10H4a1 1 0 0 0-1 1z"/><path d="M14 8a5 5 0 0 1 0 8"/><path d="M17.5 5.5a9 9 0 0 1 0 13"/></svg>`,label:'Announcements',roles:['admin','staff']},
     {id:'plans',group:'Management',icon:`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`,label:'Membership Plans',roles:['admin','staff']},
     {id:'reports',group:'Operations',icon:`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>`,label:'Reports',roles:['admin','staff']},
     {id:'users',group:'Administration',icon:`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`,label:'User Management',roles:['admin'],badge:'pendingBadge'}
@@ -444,7 +964,7 @@ function buildSidebar(){
 function renderTopbar(){
   const av=document.getElementById('topAvatar');
   av.className='user-avatar avatar-'+currentUser.role;
-  av.textContent=initials(currentUser.name);
+  setUserAvatar(av,currentUser.name,userAvatarOf());
   startClock();
 }
 let _clockInterval=null;
@@ -461,12 +981,14 @@ function startClock(){
   _clockInterval=setInterval(tick,1000);
 }
 let _lastPanel=null;
+const PANEL_ROLES={myqr:['member'],myattendance:['member'],members:['admin','staff'],history:['admin','staff'],queue:['admin','staff'],billing:['admin','staff'],walkin:['admin','staff'],schedule:['admin','staff','trainer'],scanner:['admin','staff'],notifications:['admin','staff'],messages:['admin','staff'],announcements:['admin','staff'],plans:['admin','staff'],reports:['admin','staff'],users:['admin'],myassigned:['trainer']};
 function navigate(panel){
+  if(currentUser&&PANEL_ROLES[panel]&&!PANEL_ROLES[panel].includes(currentUser.role)){toast('You do not have access to this section.','error');return;}
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   const ni=document.getElementById('nav-'+panel);
   if(ni)ni.classList.add('active');
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
-  const titles={dashboard:'Dashboard',members:'Member Management',billing:'Billing & Payments',walkin:'Walk-In Management',schedule:'Trainer Schedule',notifications:'Member Renewals',plans:'Membership Plans',reports:'Reports',users:'User Management'};
+  const titles={dashboard:'Dashboard',members:'Member Management',history:'Member History',billing:'Billing & Payments',walkin:'Walk-In Management',schedule:'Trainer Schedule',notifications:'Member Renewals',messages:'Member Messages',plans:'Membership Plans',reports:'Reports',users:'User Management',queue:'Payment Queue',scanner:'QR Scanner',myqr:'My QR Code',myattendance:'My Attendance',myassigned:'My Assigned Members'};
   document.getElementById('pageTitle').textContent=titles[panel]||'';
   const panelEl=document.getElementById('panel'+capitalize(panel));
   if(panelEl)panelEl.classList.add('active');
@@ -475,9 +997,26 @@ function navigate(panel){
   }
   _lastPanel=panel;
   renderPanel(panel);
+  if(panel!=='scanner')stopScanner();
 }
 function capitalize(s){return s.charAt(0).toUpperCase()+s.slice(1);}
 function initials(name){return name.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2);}
+function memberAvatarOf(){
+  if(!currentUser||currentUser.role!=='member')return'';
+  const m=Members.one(currentUser.memberId||currentUser.id);
+  return(m&&m.avatar)?m.avatar:'';
+}
+function userAvatarOf(){
+  const u=currentUser;
+  if(!u)return '';
+  if(u.role==='member')return memberAvatarOf();
+  return u.avatar||'';
+}
+function setUserAvatar(el,name,avatar){
+  if(!el)return;
+  if(avatar){el.style.backgroundImage='url("'+avatar+'")';el.style.backgroundSize='cover';el.style.backgroundPosition='center';el.style.backgroundRepeat='no-repeat';el.textContent='';}
+  else{el.style.backgroundImage='';el.textContent=initials(name);}
+}
 
 // ============================= TOAST =============================
 function toast(msg,type='success'){
@@ -485,7 +1024,7 @@ function toast(msg,type='success'){
   const icons={success:'check',error:'x',info:'info'};
   const t=document.createElement('div');
   t.className=`toast ${type}`;
-  t.innerHTML=`<span class="toast-icon">${iconSvg(icons[type],14)}</span><span>${msg}</span>`;
+  t.innerHTML=`<span class="toast-icon">${iconSvg(icons[type],14)}</span><span>${esc(msg)}</span>`;
   wrap.appendChild(t);
   setTimeout(()=>{t.classList.add('removing');setTimeout(()=>t.remove(),300);},3000);
 }
@@ -542,7 +1081,8 @@ const ICONS={
   gear:`<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>`,
   wave:`<path d="M18 11V6a2 2 0 0 0-4 0v5"/><path d="M14 10V4a2 2 0 0 0-4 0v2"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>`,
   ticket:`<path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/>`,
-  star:`<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>`
+  star:`<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>`,
+  camera:`<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>`
 };
 // Keys use the base codepoint only (no variation selector) so both "⚠" and
 // "⚠️" forms match; trailing U+FE0F is skipped by iconize().
@@ -619,9 +1159,20 @@ function scanRenewals(){
     if(m.status==='Archived')return;
     m.status=Member.wrap(m).computeStatus();
   });
+  // Auto-archive unpaid sign-ups older than PENDING_ARCHIVE_DAYS
+  const now=Date.now();
+  all.forEach(m=>{
+    if(m.status!=='pending_payment')return;
+    const created=new Date(m.createdAt||now).getTime();
+    if(now-created>PENDING_ARCHIVE_DAYS*86400000){
+      m.status='Archived';
+      resolveNotifsForMember(m.id);
+    }
+  });
   Members.save(all);
   const badge=document.getElementById('notifBadge');
   if(badge){const c=Members.all().filter(m=>m.status!=='Archived'&&(m.status==='Expiring Soon'||m.status==='Expired')&&!_dismissedIds.has(m.id)).length;badge.textContent=c;badge.style.display=c>0?'flex':'none';}
+  updateQueueBadge();
 }
 
 // ============================= PENDING APPROVALS BADGE =============================
@@ -634,7 +1185,7 @@ function updatePendingBadge(){
 
 // ============================= PANEL ROUTER =============================
 function renderPanel(p){
-  const map={dashboard:renderDashboard,members:renderMembers,billing:renderBilling,walkin:renderWalkin,schedule:renderSchedule,notifications:renderNotifications,plans:renderPlans,reports:renderReports,users:renderUsers};
+  const map={dashboard:renderDashboard,members:renderMembers,history:renderHistory,billing:renderBilling,walkin:renderWalkin,schedule:renderSchedule,notifications:renderNotifications,renewed:renderRenewed,messages:renderMessages,announcements:renderAnnouncements,plans:renderPlans,reports:renderReports,users:renderUsers,queue:renderQueue,scanner:renderScanner,myqr:renderMyQr,myattendance:renderMyAttendance,myassigned:renderMyAssigned};
   if(map[p])map[p]();
   iconize(document.getElementById('panel'+p.charAt(0).toUpperCase()+p.slice(1)));
 }
@@ -659,9 +1210,16 @@ function dashHero(actions){
 function renderDashboard(){
   const el=document.getElementById('panelDashboard');
   const role=currentUser.role;
-  if(role==='admin')el.innerHTML=buildAdminDashboard();
+  if(role==='member'){el.innerHTML=buildMemberDashboard();refreshMyQr();}
+  else if(role==='admin')el.innerHTML=buildAdminDashboard();
   else if(role==='staff')el.innerHTML=buildStaffDashboard();
   else el.innerHTML=buildTrainerDashboard();
+}
+function updateQueueBadge(){
+  if(!currentUser||(currentUser.role!=='admin'&&currentUser.role!=='staff'))return;
+  const pending=Members.all().filter(m=>m.status==='pending_payment').length;
+  const badge=document.getElementById('queueBadge');
+  if(badge){badge.textContent=pending;badge.style.display=pending>0?'flex':'none';}
 }
 function buildAdminDashboard(){
   const members=Members.all().filter(m=>m.status!=='Archived');
@@ -690,15 +1248,15 @@ function buildAdminDashboard(){
     const x=i*(barW+gap)+10;const y=chartH-bh+20;
     return `<g>
       <rect x="${x}" y="${y}" width="${barW}" height="${bh}" rx="4" fill="url(#barGrad)"/>
-      <text x="${x+barW/2}" y="${chartH+35}" text-anchor="middle" fill="#94a3b8" font-size="10">${r.label}</text>
-      ${r.value>0?`<text x="${x+barW/2}" y="${y-4}" text-anchor="middle" fill="#7285ff" font-size="9">₱${r.value>=1000?(r.value/1000).toFixed(1)+'k':r.value}</text>`:''}
+      <text x="${x+barW/2}" y="${chartH+35}" text-anchor="middle" fill="#b3bcb5" font-size="10">${r.label}</text>
+      ${r.value>0?`<text x="${x+barW/2}" y="${y-4}" text-anchor="middle" fill="#b3bcb5" font-size="9">₱${r.value>=1000?(r.value/1000).toFixed(1)+'k':r.value}</text>`:''}
     </g>`;}).join('');
   // Donut chart
   const plans=Plans.all();
   const planCounts={};
   members.forEach(m=>{if(!m.planId)return;const pl=plans.find(p=>p.id===m.planId);if(pl)planCounts[pl.name]=(planCounts[pl.name]||0)+1;});
   const total=Object.values(planCounts).reduce((a,b)=>a+b,0)||1;
-  const colors=['#7285ff','#fbbf24','#34d399','#60a5fa'];
+  const colors=['#b3bcb5','#fbbf24','#7ffa88','#b3bcb5'];
   let angle=0;const donutPaths=[];const legend=[];
   Object.entries(planCounts).forEach(([name,count],i)=>{
     const pct=count/total;const slice=pct*2*Math.PI;
@@ -706,11 +1264,11 @@ function buildAdminDashboard(){
     const x2=50+40*Math.sin(angle+slice);const y2=50-40*Math.cos(angle+slice);
     const big=slice>Math.PI?1:0;
     if(count>0)donutPaths.push(`<path d="M50,50 L${x1},${y1} A40,40 0 ${big},1 ${x2},${y2} Z" fill="${colors[i%colors.length]}" opacity=".85"/>`);
-    legend.push(`<div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#94a3b8"><span style="width:10px;height:10px;border-radius:2px;background:${colors[i%colors.length]};flex-shrink:0"></span>${name}: ${count} (${Math.round(pct*100)}%)</div>`);
+    legend.push(`<div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#b3bcb5"><span style="width:10px;height:10px;border-radius:2px;background:${colors[i%colors.length]};flex-shrink:0"></span>${name}: ${count} (${Math.round(pct*100)}%)</div>`);
     angle+=slice;
   });
   return `
-  ${dashHero(`<button class="btn-primary" onclick="openCheckin()">📋 Check In Member</button>
+  ${dashHero(`<button class="btn-primary" style="display:inline-flex;align-items:center;gap:8px;width:auto" onclick="navigate('scanner')">${iconSvg('camera',16)} Open QR Scanner</button>
     <button class="btn-secondary" onclick="navigate('billing')">💳 Record Payment</button>
     ${pendingUsers.length?`<button class="btn-secondary" style="background:rgba(251,191,36,.12);border-color:rgba(251,191,36,.3);color:var(--gold)" onclick="navigate('users')">⏳ ${pendingUsers.length} Pending Approval</button>`:''}`)}
   <div class="stats-grid">
@@ -723,7 +1281,7 @@ function buildAdminDashboard(){
     <div class="chart-card">
       <div class="chart-title">Revenue — Last 6 Months</div>
       <svg viewBox="0 0 320 160" style="height:160px">
-        <defs><linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#7285ff"/><stop offset="100%" stop-color="#fbbf24"/></linearGradient></defs>
+        <defs><linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#b3bcb5"/><stop offset="100%" stop-color="#fbbf24"/></linearGradient></defs>
         ${bars}
       </svg>
     </div>
@@ -733,7 +1291,7 @@ function buildAdminDashboard(){
         <svg viewBox="0 0 100 100" style="width:100px;height:100px;flex-shrink:0">
           ${donutPaths.join('')}
           <circle cx="50" cy="50" r="22" fill="#1b2542"/>
-          <text x="50" y="54" text-anchor="middle" fill="#7285ff" font-size="11" font-weight="700">${total}</text>
+          <text x="50" y="54" text-anchor="middle" fill="#b3bcb5" font-size="11" font-weight="700">${total}</text>
         </svg>
         <div style="display:flex;flex-direction:column;gap:6px">${legend.join('')}</div>
       </div>
@@ -743,20 +1301,20 @@ function buildAdminDashboard(){
     <div class="table-card">
       <div class="table-header"><h3>Recent Payments</h3></div>
       <table><thead><tr><th>Member</th><th>Plan</th><th>Amount</th><th>Date</th></tr></thead><tbody>
-      ${recent.length?recent.map(p=>`<tr><td>${p.memberName}</td><td>${p.planName}</td><td style="color:var(--green)">₱${Number(p.amount).toLocaleString()}</td><td>${formatDate(p.date)}</td></tr>`).join(''):`<tr><td colspan="4"><div class="empty-state"><div class="empty-icon">💳</div><p>No payments yet</p></div></td></tr>`}
+      ${recent.length?recent.map(p=>`<tr><td>${esc(p.memberName)}</td><td>${esc(p.planName)}</td><td style="color:var(--green)">₱${Number(p.amount).toLocaleString()}</td><td>${formatDate(p.date)}</td></tr>`).join(''):`<tr><td colspan="4"><div class="empty-state"><div class="empty-icon">💳</div><p>No payments yet</p></div></td></tr>`}
       </tbody></table>
     </div>
     <div class="table-card">
       <div class="table-header"><h3>Expiring Memberships</h3></div>
       <table><thead><tr><th>Member</th><th>Plan</th><th>Expiry</th><th>Days Left</th></tr></thead><tbody>
-      ${expiring.length?expiring.map(m=>{const d=daysUntil(m.expiryDate);const pl=Plans.all().find(p=>p.id===m.planId);return`<tr style="background:${d<=3?'rgba(248,113,113,.06)':'rgba(245,158,11,.05)'}"><td>${m.name}</td><td>${pl?pl.name:'—'}</td><td>${formatDate(m.expiryDate)}</td><td><span class="days-badge ${d<=3?'days-urgent':'days-warn'}">${d}d</span></td></tr>`}).join(''):`<tr><td colspan="4"><div class="empty-state"><div class="empty-icon">✅</div><p>No expiring memberships</p></div></td></tr>`}
+      ${expiring.length?expiring.map(m=>{const d=daysUntil(m.expiryDate);const pl=Plans.all().find(p=>p.id===m.planId);return`<tr style="background:${d<=3?'rgba(239,68,68,.06)':'rgba(251,191,36,.05)'}"><td>${esc(m.name)}</td><td>${esc(pl?pl.name:'—')}</td><td>${formatDate(m.expiryDate)}</td><td><span class="days-badge ${d<=3?'days-urgent':'days-warn'}">${d}d</span></td></tr>`}).join(''):`<tr><td colspan="4"><div class="empty-state"><div class="empty-icon">✅</div><p>No expiring memberships</p></div></td></tr>`}
       </tbody></table>
     </div>
   </div>
   ${(()=>{
     if(!pendingUsers.length)return'';
     const rows=pendingUsers.map(u=>`<tr style="background:rgba(251,191,36,.04)">
-      <td><div style="display:flex;align-items:center;gap:8px"><div class="user-avatar avatar-${u.role}" style="width:26px;height:26px;font-size:10px;flex-shrink:0">${initials(u.name)}</div><div><div style="font-weight:600;color:var(--white)">${u.name}</div><div style="font-size:11px;color:var(--gray-500);font-family:monospace">@${u.username}</div></div></div></td>
+      <td><div style="display:flex;align-items:center;gap:8px"><div class="user-avatar avatar-${u.role}" style="width:26px;height:26px;font-size:10px;flex-shrink:0;${u.avatar?'background:url(\''+u.avatar+'\') center/cover;background-size:cover;':''}">${u.avatar?'':esc(initials(u.name))}</div><div><div style="font-weight:600;color:var(--white)">${esc(u.name)}</div><div style="font-size:11px;color:var(--gray-500);font-family:monospace">@${esc(u.username)}</div></div></div></td>
       <td><span class="badge badge-${u.role}">${u.role}</span></td>
       <td style="font-size:12px;color:var(--gray-500)">${formatDate(u.createdAt||today())}</td>
       <td><div class="td-actions">
@@ -786,24 +1344,24 @@ function buildStaffDashboard(){
     <div class="stat-card orange"><div class="stat-label">Total Members</div><div class="stat-value">${members.length}</div></div>
     <div class="stat-card green"><div class="stat-label">Today's Check-Ins</div><div class="stat-value">${attendance.length}</div></div>
     <div class="stat-card gold"><div class="stat-label">Pending Renewals</div><div class="stat-value">${expiring3.length}</div><div class="stat-hint">Expiring within 3 days</div></div>
-    <div class="stat-card blue"><div class="stat-label">Today's Walk-Ins</div><div class="stat-value">${todayWalkins}</div><div class="stat-hint">₱${todayWalkins*100} collected</div></div>
+    <div class="stat-card blue"><div class="stat-label">Today's Walk-Ins</div><div class="stat-value">${todayWalkins}</div><div class="stat-hint">₱${(todayWalkins*getWalkinFee()).toLocaleString()} collected</div></div>
   </div>
-  <div class="checkin-btn-wrap" style="display:flex;gap:10px;margin-bottom:16px">
-    <button class="btn-primary" style="width:auto" onclick="openCheckin()">✅ Check In Member</button>
-    <button class="btn-secondary" style="background:rgba(114,133,255,.15);color:var(--orange);border:1px solid rgba(114,133,255,.3)" onclick="openCheckout()">🚪 Check Out Member</button>
-    <button class="btn-secondary" style="background:rgba(114,133,255,.15);color:var(--orange);border:1px solid rgba(114,133,255,.3)" onclick="navigate('walkin')">🚶 Register Walk-In</button>
+  <div class="checkin-btn-wrap" style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+    <button class="btn-primary" style="width:auto;display:inline-flex;align-items:center;gap:8px" onclick="navigate('scanner')">${iconSvg('camera',16)} Open QR Scanner</button>
+    <button class="btn-secondary" style="background:rgba(179,188,181,.15);color:var(--orange);border:1px solid rgba(179,188,181,.3)" onclick="navigate('walkin')">🚶 Register Walk-In</button>
+    <a style="font-size:12px;color:var(--gray-500);cursor:pointer;text-decoration:underline;text-underline-offset:3px" onclick="openCheckin()">Manual check-in (no QR)</a>
   </div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
     <div class="table-card">
       <div class="table-header"><h3>Today's Check-Ins</h3></div>
       <table><thead><tr><th>Member</th><th>Check-In</th><th>Check-Out</th><th>Duration</th></tr></thead><tbody>
-      ${todayLog.length?todayLog.map(a=>`<tr><td>${a.memberName}</td><td>${a.checkIn||a.time}</td><td>${a.checkOut||'<span style="color:var(--gold);font-size:11px">In Gym</span>'}</td><td>${a.duration||'—'}</td></tr>`).join(''):`<tr><td colspan="4"><div class="empty-state"><div class="empty-icon">📋</div><p>No check-ins today</p></div></td></tr>`}
+      ${todayLog.length?todayLog.map(a=>`<tr><td>${esc(a.memberName)}</td><td>${esc(a.checkIn||a.time)}</td><td>${a.checkOut?esc(a.checkOut):'<span style="color:var(--green);font-size:11px">Checked In</span>'}</td><td>${a.checkOut?esc(a.duration||'—'):'Active (checked-in)'}</td></tr>`).join(''):`<tr><td colspan="4"><div class="empty-state"><div class="empty-icon">📋</div><p>No check-ins today</p></div></td></tr>`}
       </tbody></table>
     </div>
     <div class="table-card">
       <div class="table-header"><h3>Renewal Reminders</h3></div>
       <table><thead><tr><th>Member</th><th>Expiry</th><th>Days</th><th></th></tr></thead><tbody>
-      ${expiring3.length?expiring3.map(m=>{const d=daysUntil(m.expiryDate);return`<tr><td>${m.name}</td><td>${formatDate(m.expiryDate)}</td><td><span class="days-badge ${d<=1?'days-urgent':'days-warn'}">${d}d</span></td><td><button class="btn-primary btn-sm" onclick="openPaymentForMember('${m.id}')">Pay</button></td></tr>`;}).join(''):`<tr><td colspan="4"><div class="empty-state"><div class="empty-icon">✅</div><p>No reminders</p></div></td></tr>`}
+      ${expiring3.length?expiring3.map(m=>{const d=daysUntil(m.expiryDate);return`<tr><td>${esc(m.name)}</td><td>${formatDate(m.expiryDate)}</td><td><span class="days-badge ${d<=1?'days-urgent':'days-warn'}">${d}d</span></td><td><button class="btn-primary btn-sm" onclick="openPaymentForMember('${m.id}')">Pay</button></td></tr>`;}).join(''):`<tr><td colspan="4"><div class="empty-state"><div class="empty-icon">✅</div><p>No reminders</p></div></td></tr>`}
       </tbody></table>
     </div>
   </div>`;
@@ -831,9 +1389,9 @@ function buildTrainerDashboard(){
       <div class="table-header"><h3>Today's Schedule <span style="font-size:12px;font-weight:400;color:var(--gray-500);margin-left:6px">${todaySessions.length} session${todaySessions.length!==1?'s':''}</span></h3></div>
       <table><thead><tr><th>Time</th><th>Member</th><th>Type</th><th>Status</th></tr></thead><tbody>
       ${todaySessions.length?todaySessions.map(s=>`<tr>
-        <td>${s.start}–${s.end}</td>
-        <td>${s.memberName||'—'}</td>
-        <td>${s.type||'—'}</td>
+        <td>${esc(s.start)}–${esc(s.end)}</td>
+        <td>${esc(s.memberName||'—')}</td>
+        <td>${esc(s.type||'—')}</td>
         <td>${statusBadge(s)}</td>
       </tr>`).join(''):`<tr><td colspan="4"><div class="empty-state"><div class="empty-icon">📅</div><p>No sessions today</p></div></td></tr>`}
       </tbody></table>
@@ -843,13 +1401,359 @@ function buildTrainerDashboard(){
       <table><thead><tr><th>Date</th><th>Time</th><th>Member</th><th>Type</th><th>Status</th></tr></thead><tbody>
       ${weekSessions.length?weekSessions.map(s=>`<tr>
         <td>${formatDate(s.date)}</td>
-        <td>${s.start}–${s.end}</td>
-        <td>${s.memberName||'—'}</td>
-        <td>${s.type||'—'}</td>
+        <td>${esc(s.start)}–${esc(s.end)}</td>
+        <td>${esc(s.memberName||'—')}</td>
+        <td>${esc(s.type||'—')}</td>
         <td>${statusBadge(s)}</td>
       </tr>`).join(''):`<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">📅</div><p>No upcoming sessions</p></div></td></tr>`}
       </tbody></table>
     </div>
+  </div>`;
+}
+
+// ======================================================================
+// TRAINER: MY ASSIGNED MEMBERS
+// ======================================================================
+function renderMyAssigned(){
+  const el=document.getElementById('panelMyassigned');
+  const u=currentUser;
+  const allSessions=Sessions.all().filter(s=>s.trainerId===u.id&&s.status!=='Cancelled');
+  const memberIds=[...new Set(allSessions.map(s=>s.memberId))];
+  const rows=memberIds.map(id=>{
+    const m=Members.one(id);
+    const plan=m&&m.planId?Plans.one(m.planId):null;
+    const mySessions=allSessions.filter(s=>s.memberId===id);
+    const completed=mySessions.filter(s=>s.status==='Completed').length;
+    const upcoming=mySessions.filter(s=>s.status==='Scheduled'&&s.date>=today()).length;
+    const totalAtt=Attendance.all().filter(a=>a.memberId===id).length;
+    const sessLimit=plan&&plan.sessions!=='Unlimited'?Number(plan.sessions):null;
+    const left=sessLimit===null?'∞':Math.max(0,sessLimit-totalAtt);
+    const statusCls=m&&(m.status==='Active'||m.status==='Expiring Soon')?'badge-active':m&&m.status==='Expired'?'badge-inactive':'badge-pending';
+    return`<tr>
+      <td><div style="display:flex;align-items:center;gap:10px"><div class="user-avatar avatar-trainer" style="width:32px;height:32px;font-size:11px;flex-shrink:0;${m&&m.avatar?'background:url(\''+m.avatar+'\') center/cover;background-size:cover;':''}">${m&&m.avatar?'':esc(initials(m?m.name:'?'))}</div><div><div style="font-weight:600;color:var(--white)">${esc(m?m.name:'Unknown member')}</div><div style="font-size:11px;color:var(--gray-500);font-family:monospace">${esc(m?m.id:'—')}</div></div></div></td>
+      <td>${esc(plan?plan.name:'—')}</td>
+      <td><span class="badge ${statusCls}">${esc(m?(m.status==='Expiring Soon'?'Expiring Soon':m.status):'—')}</span></td>
+      <td><span class="days-badge days-warn">${left}</span></td>
+      <td>${completed}<span style="color:var(--gray-500);font-size:11px"> / ${mySessions.length} total</span></td>
+      <td>${upcoming}</td>
+      <td><div class="td-actions"><button class="btn-secondary btn-sm" onclick="schedTrainerFilter='${u.id}';schedView='list';navigate('schedule')">View Sessions</button></div></td>
+    </tr>`;}).join('');
+  el.innerHTML=`
+  <div class="stats-grid">
+    <div class="stat-card orange"><div class="stat-label">Assigned Members</div><div class="stat-value">${memberIds.length}</div><div class="stat-hint">Unique members</div></div>
+    <div class="stat-card green"><div class="stat-label">Sessions Completed</div><div class="stat-value">${allSessions.filter(s=>s.status==='Completed').length}</div><div class="stat-hint">All time</div></div>
+    <div class="stat-card gold"><div class="stat-label">Upcoming Sessions</div><div class="stat-value">${allSessions.filter(s=>s.status==='Scheduled'&&s.date>=today()).length}</div><div class="stat-hint">Scheduled</div></div>
+  </div>
+  <div class="table-card">
+    <div class="table-header"><h3>My Assigned Members <span style="font-size:12px;font-weight:400;color:var(--gray-500);margin-left:6px">${memberIds.length} member${memberIds.length!==1?'s':''}</span></h3></div>
+    <div style="overflow-x:auto"><table><thead><tr><th>Member</th><th>Plan Type</th><th>Status</th><th>Sessions Left</th><th>Completed</th><th>Upcoming</th><th>Actions</th></tr></thead><tbody>
+    ${rows||`<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">👥</div><p>No members assigned yet</p><p class="empty-sub">Sessions assigned to you by the front desk will appear here.</p></div></td></tr>`}
+    </tbody></table></div>
+  </div>`;
+}
+
+// ======================================================================
+// MEMBER DASHBOARD (self-service portal for Member accounts)
+// ======================================================================
+function mbStepsHtml(mem){
+  const steps=[{id:'registered',label:'Registered'},{id:'pay',label:'Awaiting Payment'},{id:'active',label:'Active'}];
+  let cur='registered';
+  if(mem.status==='pending_payment')cur='pay';
+  else if(mem.status==='Active'||mem.status==='Expiring Soon'||mem.status==='Expired')cur='active';
+  const states={registered:'todo',pay:'todo',active:'todo'};
+  if(cur==='active'){states.registered='done';states.pay='done';states.active='done';}
+  else if(cur==='pay'){states.registered='done';states.pay='cur';}
+  else states.registered='cur';
+  return `<div class="mb-steps">${steps.map((s,i)=>`${i?'<div class="mb-steps-line"></div>':''}<div class="mb-step ${states[s.id]}"><span class="mb-step-dot">${states[s.id]==='done'?'✓':'·'}</span><span>${s.label}</span></div>`).join('')}</div>`;
+}
+function buildMemberDashboard(){
+  const mem=Members.one(currentUser.memberId||currentUser.id);
+  if(!mem)return'<div class="table-card"><div class="empty-state"><p>Member record not found. Please contact the front desk.</p></div></div>';
+  const plan=mem.planId?Plans.one(mem.planId):null;
+  const d=daysUntil(mem.expiryDate);
+  const today_=today();
+  const myAtt=Attendance.all().filter(a=>a.memberId===mem.id).slice().reverse().slice(0,6);
+  const totalAtt=Attendance.all().filter(a=>a.memberId===mem.id).length;
+  const locked=mem.status==='pending_payment';
+  let banner='',panel='';
+  if(mem.status==='pending_payment'){
+    banner=`<div class="mb-banner pending">
+      <div class="mb-banner-ico">⏳</div>
+      <div>
+        <div class="mb-banner-title">Awaiting Payment</div>
+        <div class="mb-banner-sub">Your account is active as soon as the front desk confirms your payment. Visit the counter and pay in <strong>Cash</strong> or <strong>GCash</strong>.</div>
+      </div>
+      <button class="mb-banner-btn" onclick="mbToggleHowToPay()">💳 How to Pay</button>
+    </div>`;
+  } else if(mem.status==='Archived'){
+    banner=`<div class="mb-banner archived">
+      <div class="mb-banner-ico">🗄</div>
+      <div>
+        <div class="mb-banner-title">Account Archived</div>
+        <div class="mb-banner-sub">Your pending sign-up was archived. Visit the front desk to sign up again.</div>
+      </div>
+    </div>`;
+  } else if(d<0){
+    banner=`<div class="mb-banner expired">
+      <div class="mb-banner-ico">🚫</div>
+      <div>
+        <div class="mb-banner-title">Plan Expired</div>
+        <div class="mb-banner-sub">Entry is blocked. Please visit the front desk to renew your membership.</div>
+      </div>
+    </div>`;
+  } else {
+    banner=`<div class="mb-banner active">
+      <div class="mb-banner-ico">✅</div>
+      <div>
+        <div class="mb-banner-title">Membership Active</div>
+        <div class="mb-banner-sub">Valid until <strong>${formatDate(mem.expiryDate)}</strong> (${d} day${d!==1?'s':''} left). Show your QR at the entrance to check in.</div>
+      </div>
+    </div>`;
+  }
+  const paySteps=locked?`
+    <div class="mb-pay-steps" id="mbPaySteps" style="display:none">
+      <div class="mb-pay-steps-title">💳 How to Pay</div>
+      <div class="mb-pay-step"><span class="mb-pay-step-n">1</span>Visit the front desk counter at the gym.</div>
+      <div class="mb-pay-step"><span class="mb-pay-step-n">2</span>Tell the staff your name: <strong>${esc(mem.name)}</strong> (<span style="font-family:monospace">${esc(mem.id)}</span>).</div>
+      <div class="mb-pay-step"><span class="mb-pay-step-n">3</span>Pay in <strong>Cash</strong> or <strong>GCash</strong>${plan?` — <strong>₱${Number(plan.price).toLocaleString()}</strong> (${esc(plan.name)} plan)`:''}.</div>
+      <div class="mb-pay-step"><span class="mb-pay-step-n">4</span>Your QR activates instantly once payment is confirmed.</div>
+      <div class="mb-pay-steps-contact">
+        <a class="btn-secondary btn-sm" href="tel:+639150435696">📞 Call Front Desk</a>
+        <a class="btn-secondary btn-sm" href="sms:+639150435696">💬 Message Front Desk</a>
+      </div>
+    </div>`:'';
+  const sessLeft=locked?'—':(plan?(plan.sessions==='Unlimited'?'∞':Math.max(0,Number(plan.sessions)-totalAtt)):'—');
+  const helpRow=`<div class="mb-help-strip">
+    <div class="mb-help-title">Need Help?</div>
+    <div class="mb-help-msg">Payments, renewals &amp; plan changes are handled at the front desk.</div>
+    <div class="mb-help-actions">
+      <a class="btn-secondary btn-sm" href="tel:+639150435696">📞 Call Front Desk</a>
+      <button class="btn-secondary btn-sm" onclick="openMemberMessageModal()" style="cursor:pointer"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Message the Gym</button>
+    </div>
+  </div>`;
+  const changePlan=(mem.status==='pending_payment')?`
+    <div class="mb-change-plan">
+      <div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:var(--gray-500);margin-bottom:10px">Change Plan (before paying)</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="mbPlanSelect" style="flex:1;padding:9px 10px;background:var(--navy-700);border:1.5px solid var(--navy-600);border-radius:8px;color:var(--white);outline:none;font-size:13px">${Plans.all().filter(p=>p.status==='Active').map(p=>`<option value="${p.id}" ${p.id===mem.planId?'selected':''}>${esc(p.name)} — ₱${Number(p.price).toLocaleString()}</option>`).join('')}</select>
+        <button class="btn-primary btn-sm" onclick="memberChangePlan('${mem.id}')">💾 Save</button>
+      </div>
+      <div style="font-size:11px;color:var(--gray-500);margin-top:8px;display:flex;gap:5px;align-items:center">💡 <span>Changes apply before payment is confirmed at the counter.</span></div>
+    </div>`:'';
+  const planCard=`<div class="mb-plan-card">
+    <div style="display:flex;justify-content:space-between;align-items:start;gap:10px">
+      <div>
+        <div style="font-size:11px;color:var(--gray-500);text-transform:uppercase;letter-spacing:1px;font-weight:700">Your Plan</div>
+        <div class="mb-plan-name">${esc(plan?plan.name:'—')}</div>
+      </div>
+      ${plan?`<div class="mb-plan-price">₱${Number(plan.price).toLocaleString()}<span>/${plan.duration===1?'mo':plan.duration+'mo'}</span></div>`:''}
+    </div>
+    ${plan?`<ul class="mb-plan-perks">${(plan.benefits||plan.perks||'').split(/\n|,/).map(b=>b.trim()).filter(Boolean).map(b=>`<li>${esc(b)}</li>`).join('')}</ul>`:''}
+    <div class="mb-plan-meta">
+      <div><span>Duration</span><strong>${plan?plan.duration+' month(s)':'-'}</strong></div>
+      <div><span>Start</span><strong>${mem.planStart?formatDate(mem.planStart):'—'}</strong></div>
+      <div><span>Expiry</span><strong>${mem.expiryDate?formatDate(mem.expiryDate):'—'}</strong></div>
+      <div><span>Sessions Left</span><strong>${sessLeft}</strong></div>
+    </div>
+  </div>`;
+  const qrBlock=`<div class="mb-qr-box${locked?' locked':''}">
+    ${locked?'<div class="mb-qr-pending">⏳ Pending payment — this QR activates once the front desk confirms it</div>':''}
+    <div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:var(--gray-500);margin-bottom:10px;text-align:center">Entrance QR — Daily</div>
+    <div class="mb-qr-frame">
+      ${locked?'<div class="mb-qr-lock">🔒</div>':''}
+      <div class="mb-qr-canvas-wrap"><div id="mbQrCanvas"></div></div>
+    </div>
+    ${mem.avatar?`<div style="text-align:center;margin-top:12px"><img class="mb-avatar-photo" src="${mem.avatar}" alt="${esc(mem.name)}"></div>`:''}
+    <div style="text-align:center;font-size:12px;color:var(--white);font-weight:700">${esc(mem.name)}</div>
+    <div style="text-align:center;font-size:10px;font-family:monospace;color:var(--gray-500)">${esc(mem.id)}</div>
+    <div style="text-align:center;margin-top:10px"><button class="btn-secondary btn-sm" onclick="navigate('myqr')">🖨 View Full QR</button></div>
+  </div>`;
+  panel=`<div class="mb-grid">
+    <div style="display:grid;gap:16px">
+      ${planCard}
+      ${changePlan}
+      <div class="table-card">
+        <div class="table-header"><h3>Recent Attendance</h3><button class="btn-secondary btn-sm" onclick="navigate('myattendance')">View All</button></div>
+        <table><thead><tr><th>Date</th><th>Time In</th><th>Status</th></tr></thead><tbody>
+        ${myAtt.length?myAtt.map(a=>`<tr><td>${formatDate(a.date)}</td><td>${esc(a.checkIn||'—')}</td><td><span class="badge ${a.checkOut?'badge-completed':'badge-scheduled'}">${a.checkOut?'Completed':'Checked In'}</span></td></tr>`).join(''):`<tr><td colspan="3"><div class="empty-state"><div class="empty-icon">📋</div><p>No check-ins yet</p><p class="empty-sub">${locked?'Your check-ins will appear here once your membership is active.':'Scan your QR at the entrance — your visits will show up here.'}</p></div></td></tr>`}
+        </tbody></table>
+      </div>
+      ${locked?'':helpRow}
+    </div>
+    <div style="display:grid;gap:16px;align-content:start">
+      ${qrBlock}
+    </div>
+  </div>`;
+  const stepsTrack=mem.status==='pending_payment'?mbStepsHtml(mem):'';
+  return `${dashHero('')}${announceStripHtml()}${banner}${stepsTrack}${paySteps}${panel}`;
+}
+function mbToggleHowToPay(){
+  const el=document.getElementById('mbPaySteps');
+  if(!el)return;
+  const open=el.style.display==='block';
+  el.style.display=open?'none':'block';
+  if(!open&&typeof el.scrollIntoView==='function')el.scrollIntoView({behavior:'smooth',block:'center'});
+}
+function memberChangePlan(memberId){
+  const sel=document.getElementById('mbPlanSelect');
+  if(!sel)return;
+  const planId=sel.value;
+  const mem=Members.one(memberId);
+  if(!mem){toast('Member not found.','error');return;}
+  if(mem.status!=='pending_payment'){toast('Plan can only be changed while payment is pending.','error');return;}
+  Members.update(memberId,{planId});
+  const notifs=Notifications.all();
+  notifs.forEach(n=>{if(n.memberId===memberId&&n.type==='pending_payment'&&n.status==='open'){n.planId=planId;}});
+  Notifications.save(notifs);
+  toast('Plan updated. New plan will be confirmed at the counter.');
+  renderDashboard();
+}
+function renderMyQr(){
+  const el=document.getElementById('panelMyqr');
+  const mem=Members.one(currentUser.memberId||currentUser.id);
+  if(!mem){el.innerHTML='<div class="table-card"><div class="empty-state"><p>Member record not found.</p></div></div>';return;}
+  const plan=mem.planId?Plans.one(mem.planId):null;
+  if(mem.status==='Archived'){
+    el.innerHTML=`<div class="mb-banner archived">
+      <div class="mb-banner-ico">🗄</div>
+      <div>
+        <div class="mb-banner-title">Account Archived</div>
+        <div class="mb-banner-sub">Your sign-up was archived. Visit the front desk to sign up again.</div>
+      </div>
+    </div>`;
+    return;
+  }
+  if(mem.status==='Expired'){
+    el.innerHTML=`<div class="mb-banner expired">
+      <div class="mb-banner-ico">🚫</div>
+      <div>
+        <div class="mb-banner-title">QR Not Available</div>
+        <div class="mb-banner-sub">Your plan is not active. Please renew at the front desk.</div>
+      </div>
+    </div>`;
+    return;
+  }
+  const locked=mem.status==='pending_payment';
+  el.innerHTML=`
+  <div style="max-width:480px;margin:0 auto">
+    <div class="mb-qr-page${locked?' locked':''}">
+      ${locked?'<div class="mb-qr-pending">⏳ Pending payment — this QR activates once the front desk confirms it</div>':''}
+      <div class="mb-qr-page-brand">FIT<span>CORE</span></div>
+      ${mem.avatar?`<img class="mb-avatar-photo" src="${mem.avatar}" alt="${esc(mem.name)}" style="margin-top:10px">`:''}
+      <div class="mb-qr-page-name">${esc(mem.name)}</div>
+      <div class="mb-qr-page-id">${esc(mem.id)}</div>
+      <div class="mb-qr-frame" style="border-radius:14px;padding:18px;margin:14px 0">
+        ${locked?'<div class="mb-qr-lock">🔒</div>':''}
+        <div class="mb-qr-canvas-wrap"><div id="myQrCanvas"></div></div>
+      </div>
+      <div style="text-align:center;font-size:11px;color:var(--gray-500);line-height:1.7">
+        ${plan?`<div>${esc(plan.name)} · ${mem.status==='pending_payment'?'payment pending':'valid until '+formatDate(mem.expiryDate)}</div>`:''}
+        <div>Show this QR at the entrance — the QR rotates daily.</div>
+      </div>
+      ${locked?'':'<div style="display:flex;gap:10px;margin:14px auto 0;max-width:300px">'+
+        '<button class="btn-secondary btn-sm" style="flex:1" onclick="refreshMyQr()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Refresh</button>'+
+        '<button class="btn-primary btn-sm" style="flex:1" onclick="downloadMyQr()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Save QR</button>'+
+        '</div>'}
+    </div>
+  </div>`;
+  refreshMyQr();
+}
+function downloadMyQr(){
+  const mem=Members.one(currentUser.memberId||currentUser.id);
+  if(!mem)return;
+  if(mem.status==='pending_payment'||mem.status==='Archived'){toast('Your QR is not active yet.','error');return;}
+  const img=document.querySelector('#myQrCanvas img');
+  if(!img){toast('QR not ready yet. Please try again.','error');return;}
+  const plan=mem.planId?Plans.one(mem.planId):null;
+  const W=720,H=960;
+  const cv=document.createElement('canvas');
+  cv.width=W;cv.height=H;
+  const ctx=cv.getContext('2d');
+  const im=new Image();
+  im.onload=function(){
+    // Background: dark navy gradient
+    const bg=ctx.createLinearGradient(0,0,0,H);
+    bg.addColorStop(0,'#0d1322');bg.addColorStop(.55,'#141d33');bg.addColorStop(1,'#0a0f1c');
+    ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+    // Decorative glow circles
+    const glow=ctx.createRadialGradient(640,120,10,640,120,260);
+    glow.addColorStop(0,'rgba(127,250,136,.22)');glow.addColorStop(1,'rgba(127,250,136,0)');
+    ctx.fillStyle=glow;ctx.fillRect(380,0,340,380);
+    // Header
+    ctx.fillStyle='#7ffa88';
+    ctx.font='900 46px Arial';ctx.textAlign='center';
+    ctx.fillText('FITCORE',W/2,84);
+    ctx.fillStyle='rgba(255,255,255,.45)';
+    ctx.font='600 19px Arial';ctx.letterSpacing='6px';
+    ctx.fillText('G Y M   M E M B E R S H I P',W/2,118);
+    // QR card
+    const qrSize=430;
+    const qx=(W-qrSize)/2,qy=158;
+    ctx.fillStyle='rgba(255,255,255,.06)';
+    ctx.beginPath();ctx.roundRect(qx-12,qy-12,qrSize+24,qrSize+24,26);ctx.fill();
+    ctx.fillStyle='#ffffff';
+    ctx.beginPath();ctx.roundRect(qx,qy,qrSize,qrSize,18);ctx.fill();
+    ctx.drawImage(im,qx+26,qy+26,qrSize-52,qrSize-52);
+    // Avatar + name
+    ctx.fillStyle='rgba(127,250,136,.14)';
+    ctx.beginPath();ctx.arc(W/2,706,40,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#7ffa88';
+    ctx.font='900 30px Arial';
+    ctx.fillText(initials(mem.name),W/2,716);
+    ctx.fillStyle='#ffffff';
+    ctx.font='800 34px Arial';
+    ctx.fillText(mem.name,W/2,786);
+    // ID chip
+    const idLabel='ID '+mem.id;
+    ctx.font='700 22px monospace';
+    const idW=ctx.measureText(idLabel).width+36;
+    ctx.fillStyle='rgba(255,255,255,.08)';
+    ctx.beginPath();ctx.roundRect(W/2-idW/2,806,idW,44,22);ctx.fill();
+    ctx.fillStyle='rgba(255,255,255,.85)';
+    ctx.fillText(idLabel,W/2,836);
+    // Plan + validity
+    ctx.font='600 24px Arial';
+    ctx.fillStyle='rgba(255,255,255,.6)';
+    ctx.fillText(plan?plan.name+' · valid until '+formatDate(mem.expiryDate):'',W/2,898);
+    // Footer
+    ctx.fillStyle='rgba(255,255,255,.32)';
+    ctx.font='600 18px Arial';
+    ctx.fillText('Show at the FitCore entrance · QR rotates daily',W/2,H-34);
+    const a=document.createElement('a');
+    a.href=cv.toDataURL('image/png');
+    a.download='FitCore-QR-'+mem.id+'.png';
+    document.body.appendChild(a);a.click();a.remove();
+    toast('QR saved to your device. You can save it to your Photos.');
+  };
+  im.onerror=function(){toast('Could not export QR.','error');};
+  im.src=img.src;
+}
+function refreshMyQr(){
+  const mem=Members.one(currentUser.memberId||currentUser.id);
+  if(!mem)return;
+  const token=qrTokenFor(mem.id,today());
+  renderQrTo(document.getElementById('myQrCanvas'),token,6);
+  renderQrTo(document.getElementById('mbQrCanvas'),token,4);
+}
+function renderMyAttendance(){
+  const el=document.getElementById('panelMyattendance');
+  const mem=Members.one(currentUser.memberId||currentUser.id);
+  if(!mem){el.innerHTML='<div class="table-card"><div class="empty-state"><p>Member record not found.</p></div></div>';return;}
+  const rows=Attendance.all().filter(a=>a.memberId===mem.id).slice().reverse();
+  const total=rows.length;
+  const thisMonth=new Date();
+  const monthCount=rows.filter(a=>{const d=new Date(a.date);return d.getMonth()===thisMonth.getMonth()&&d.getFullYear()===thisMonth.getFullYear();}).length;
+  el.innerHTML=`
+  <div class="stats-grid">
+    <div class="stat-card orange"><div class="stat-label">Total Check-Ins</div><div class="stat-value">${total}</div><div class="stat-hint">All time</div></div>
+    <div class="stat-card green"><div class="stat-label">This Month</div><div class="stat-value">${monthCount}</div><div class="stat-hint">${thisMonth.toLocaleString('en-US',{month:'long'})}</div></div>
+    <div class="stat-card gold"><div class="stat-label">Last Visit</div><div class="stat-value" style="font-size:20px">${rows.length?formatDate(rows[0].date):'—'}</div><div class="stat-hint">${rows.length?esc(rows[0].checkIn||''):''}</div></div>
+  </div>
+  <div class="table-card">
+    <div class="table-header"><h3>My Attendance <span style="font-size:12px;font-weight:400;color:var(--gray-500);margin-left:6px">${total} record${total!==1?'s':''}</span></h3></div>
+    <div style="overflow-x:auto"><table><thead><tr><th>Date</th><th>Time In</th><th>Time Out</th><th>Duration</th><th>Status</th></tr></thead><tbody>
+    ${rows.length?rows.map(a=>`<tr><td>${formatDate(a.date)}</td><td>${esc(a.checkIn||'—')}</td><td>${esc(a.checkOut||'—')}</td><td>${esc(a.duration||'—')}</td><td><span class="badge ${a.checkOut?'badge-completed':'badge-scheduled'}">${a.checkOut?'Completed':'Checked In'}</span></td></tr>`).join(''):`<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">📋</div><p>No check-ins yet. Scan your QR at the entrance to start.</p></div></td></tr>`}
+    </tbody></table></div>
   </div>`;
 }
 
@@ -860,19 +1764,21 @@ let memberPage=1;let memberSearch='';let memberStatusFilter='All';let memberPlan
 function renderMembers(){
   const el=document.getElementById('panelMembers');
   const plans=Plans.all();
-  const planOpts=plans.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+  const planOpts=plans.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
   el.innerHTML=`
   <div class="page-actions">
     <div class="table-controls">
-      <input class="search-input" placeholder="Search by name or ID…" value="${memberSearch}" oninput="memberSearch=this.value;memberPage=1;refreshMemberTable()">
+      <input class="search-input" placeholder="Search by name or ID…" value="${esc(memberSearch)}" oninput="memberSearch=this.value;memberPage=1;refreshMemberTable()">
       <select class="filter-sel" onchange="memberStatusFilter=this.value;memberPage=1;refreshMemberTable()">
-        <option>All</option><option>Active</option><option>Expired</option><option>Expiring Soon</option>
+        <option>All</option><option>Active</option><option>Expired</option><option>Expiring Soon</option><option value="pending_payment">Pending Payment</option>
       </select>
       <select class="filter-sel" onchange="memberPlanFilter=this.value;memberPage=1;refreshMemberTable()">
         <option value="All">All Plans</option>${planOpts}
       </select>
     </div>
     <button class="btn-primary" onclick="openMemberModal()">+ Add New Member</button>
+    <button class="btn-secondary" style="width:46px;height:46px;padding:0;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0" onclick="renumberMembers()" title="Purge archived members and renumber IDs sequentially (MEM-0001, MEM-0002, …)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button>
+    <button class="btn-danger" style="width:46px;height:46px;padding:0;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0" onclick="resetAllMembers()" title="Delete ALL members — empty member list"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
   </div>
   <div class="table-card" id="memberTableCard"></div>`;
   refreshMemberTable();
@@ -886,33 +1792,33 @@ function refreshMemberTable(){
   const slice=data.slice((memberPage-1)*perPage,memberPage*perPage);
   const plans=Plans.all();
   const allUsers=Users.all();
-  const roleColorMap={admin:'var(--orange)',staff:'#aab5ff',trainer:'var(--green)'};
+  const roleColorMap={admin:'var(--orange)',staff:'#d7ddd8',trainer:'var(--green)'};
   const rows=slice.length?slice.map(m=>{
     const pl=plans.find(p=>p.id===m.planId);
-    const badgeCls={Active:'badge-active',Expired:'badge-expired',Suspended:'badge-suspended','Expiring Soon':'badge-expiring'}[m.status]||'badge-suspended';
+    const badgeCls={Active:'badge-active',Expired:'badge-expired',Suspended:'badge-suspended','Expiring Soon':'badge-expiring','pending_payment':'badge-pending'}[m.status]||'badge-suspended';
     // Created By
     const createdByUser=m.createdBy?allUsers.find(u=>u.name===m.createdBy||u.username===m.createdByUsername):null;
     const cRoleColor=createdByUser?roleColorMap[createdByUser.role]||'var(--gray-300)':'var(--gray-300)';
     const cRoleTag=createdByUser?`<span style="font-size:9px;font-weight:800;padding:2px 5px;border-radius:4px;background:rgba(255,255,255,.07);color:${cRoleColor};margin-left:4px;text-transform:uppercase">${createdByUser.role}</span>`:'';
-    const createdLine=m.createdBy?`<div style="font-size:12px;font-weight:600;color:var(--gray-100)">${m.createdBy}${cRoleTag}</div>`:`<span style="font-size:11px;color:var(--gray-500)">—</span>`;
+    const createdLine=m.createdBy?`<div style="font-size:12px;font-weight:600;color:var(--gray-100)">${esc(m.createdBy)}${cRoleTag}</div>`:`<span style="font-size:11px;color:var(--gray-500)">—</span>`;
     // Edited By
     const editedByUser=m.editedBy?allUsers.find(u=>u.name===m.editedBy||u.username===m.editedByUsername):null;
     const eRoleColor=editedByUser?roleColorMap[editedByUser.role]||'var(--gray-300)':'var(--gray-300)';
     const eRoleTag=editedByUser?`<span style="font-size:9px;font-weight:800;padding:2px 5px;border-radius:4px;background:rgba(255,255,255,.07);color:${eRoleColor};margin-left:4px;text-transform:uppercase">${editedByUser.role}</span>`:'';
-    const editedLine=m.editedBy?`<div style="font-size:11px;color:var(--gray-500);margin-top:3px">✎ ${m.editedBy}${eRoleTag}</div>`:'';
+    const editedLine=m.editedBy?`<div style="font-size:11px;color:var(--gray-500);margin-top:3px">✎ ${esc(m.editedBy)}${eRoleTag}</div>`:'';
     return`<tr>
-      <td>${m.id}</td>
-      <td><div style="display:flex;align-items:center;gap:8px"><div class="member-avatar">${initials(m.name)}</div>${m.name}</div></td>
-      <td>${m.contact}</td>
-      <td>${pl?pl.name:'—'}</td>
+      <td>${esc(m.id)}</td>
+      <td><div style="display:flex;align-items:center;gap:8px"><div class="member-avatar" style="${m.avatar?'background:url(\''+m.avatar+'\') center/cover;background-size:cover;':''}">${m.avatar?'':esc(initials(m.name))}</div>${esc(m.name)}</div></td>
+      <td>${esc(m.contact)}</td>
+      <td>${esc(pl?pl.name:'—')}</td>
       <td>${formatDate(m.startDate)}</td>
       <td>${formatDate(m.expiryDate)}</td>
-      <td><span class="badge ${badgeCls}">${m.status}</span></td>
+      <td><span class="badge ${badgeCls}">${esc(m.status)}</span></td>
       <td><div>${createdLine}${editedLine}</div></td>
       <td><div class="td-actions">
         <button class="btn-icon" title="View" onclick="viewMember('${m.id}')">👁</button>
         <button class="btn-icon" title="Edit" onclick="openMemberModal('${m.id}')">✏️</button>
-        <button class="btn-icon" title="Delete" style="color:var(--red);border-color:rgba(248,113,113,.25);background:rgba(248,113,113,.08)" onmouseover="this.style.background='var(--red)';this.style.color='#fff'" onmouseout="this.style.background='rgba(248,113,113,.08)';this.style.color='var(--red)'" onclick="deleteMember('${m.id}')">✕</button>
+        <button class="btn-icon" title="Delete" style="color:var(--red);border-color:rgba(239,68,68,.25);background:rgba(239,68,68,.08)" onmouseover="this.style.background='var(--red)';this.style.color='#fff'" onmouseout="this.style.background='rgba(239,68,68,.08)';this.style.color='var(--red)'" onclick="deleteMember('${m.id}')">✕</button>
       </div></td>
     </tr>`;}).join(''):`<tr><td colspan="9"><div class="empty-state"><div class="empty-icon">👥</div><p>No members found</p></div></td></tr>`;
   let pag='';
@@ -934,7 +1840,7 @@ function openMemberModal(id=null){
   document.getElementById('memberModalTitle').textContent=id?'Edit Member':'Add New Member';
   document.getElementById('memberFormError').style.display='none';
   const plans=Plans.all().filter(p=>p.status==='Active');
-  document.getElementById('mf_plan').innerHTML=plans.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+  document.getElementById('mf_plan').innerHTML=plans.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
   // Sync amount when plan changes
   document.getElementById('mf_plan').onchange=function(){
     const plan=Plans.one(this.value);
@@ -967,7 +1873,8 @@ function openMemberModal(id=null){
     document.getElementById('mf_ecname').value=m.ecName||'';
     document.getElementById('mf_ecnum').value=m.ecNum||'';
     document.getElementById('mf_notes').value=m.notes||'';
-    // billing fields
+    document.getElementById('mf_user').value=m.username||'';
+    document.getElementById('mf_pass').value='';
     document.getElementById('mf_paydate').value=today();
     const plan=Plans.one(m.planId);
     document.getElementById('mf_amount').value=plan?plan.price:'';
@@ -990,7 +1897,7 @@ function openMemberModal(id=null){
       if(billingNote)billingNote.style.display='none';
     }
   } else {
-    ['mf_name','mf_contact','mf_age','mf_address','mf_ecname','mf_ecnum','mf_notes'].forEach(id=>document.getElementById(id).value='');
+    ['mf_name','mf_contact','mf_age','mf_address','mf_ecname','mf_ecnum','mf_notes','mf_user','mf_pass'].forEach(id=>document.getElementById(id).value='');
     document.getElementById('mf_sex').value='';
     document.getElementById('mf_start').value=today();
     document.getElementById('mf_paydate').value=today();
@@ -1036,16 +1943,25 @@ function saveMember(){
   }
   const plan=Plans.one(planId);
   const expiryDate=addMonths(startDate,plan?plan.duration:1);
+  const uname=document.getElementById('mf_user').value.trim();
+  const pass=document.getElementById('mf_pass').value;
+  if(uname||pass){
+    if(pass&&pass.length<6){err.textContent='Password must be at least 6 characters.';err.style.display='block';return;}
+    if(uname&&Members.all().some(x=>x.username&&x.username.toLowerCase()===uname.toLowerCase()&&x.id!==editingMemberId)){err.textContent='Username already taken. Please choose a different username.';err.style.display='block';return;}
+    if(uname&&Users.all().some(x=>x.username.toLowerCase()===uname.toLowerCase())){err.textContent='Username already taken by a staff or trainer account.';err.style.display='block';return;}
+  }
   const data={
-    name,contact,age:document.getElementById('mf_age').value,sex:document.getElementById('mf_sex').value,
-    planId,startDate,expiryDate,address:document.getElementById('mf_address').value.trim(),
-    ecName:document.getElementById('mf_ecname').value.trim(),ecNum:document.getElementById('mf_ecnum').value.trim(),
-    notes:document.getElementById('mf_notes').value.trim(),status:'Active'
+    name:sanitizeText(name),contact:sanitizeText(contact),age:sanitizeText(document.getElementById('mf_age').value),sex:sanitizeText(document.getElementById('mf_sex').value),
+    planId,startDate,expiryDate,address:sanitizeText(document.getElementById('mf_address').value.trim()),
+    ecName:sanitizeText(document.getElementById('mf_ecname').value.trim()),ecNum:sanitizeText(document.getElementById('mf_ecnum').value.trim()),
+    notes:sanitizeText(document.getElementById('mf_notes').value.trim()),status:'Active'
   };
+  if(uname)data.username=uname;
+  if(pass)data.passwordHash=hashPassword(pass);
   const confirmTitle=editingMemberId?'Update Member':'Add New Member';
   const confirmMsg=editingMemberId
-    ?`Save changes to <strong>${name}</strong>? Billing records linked to this member will also be synced automatically.`
-    :`Add <strong>${name}</strong> as a new member under the <strong>${plan?plan.name:'selected'}</strong> plan? A payment record will be created automatically.`;
+    ?`Save changes to <strong>${esc(name)}</strong>? Billing records linked to this member will also be synced automatically.`
+    :`Add <strong>${esc(name)}</strong> as a new member under the <strong>${esc(plan?plan.name:'selected')}</strong> plan? A payment record will be created automatically.`;
   openConfirm(confirmTitle, confirmMsg, ()=>{
     if(editingMemberId){
       const idx=members.findIndex(m=>m.id===editingMemberId);
@@ -1090,8 +2006,8 @@ function saveMember(){
       logActivity('Edited','Member',name,'ID: '+editingMemberId+' | '+changeDetail);
       toast(currentUser.role==='admin'?'Member updated. Billing records synced automatically.':'Member info updated successfully.');
     } else {
-      const newId=nextId(KEY.members,'MEM');
-      members.push({id:newId,...data,createdBy:currentUser.name,createdByUsername:currentUser.username,createdByRole:currentUser.role,createdAt:today()});
+      const newId=nextMemberId();
+      members.push({id:newId,...data,createdBy:currentUser.name,createdByUsername:currentUser.username,createdByRole:currentUser.role,createdAt:today(),bgCheckStatus:'Pending',bgCheckDate:'',bgCheckBy:'',bgCheckNotes:''});
       Members.save(members);
       logActivity('Added','Member',name,'ID: '+newId+' | Plan: '+(plan?plan.name:''));
       // AUTO-CREATE PAYMENT RECORD
@@ -1119,11 +2035,46 @@ function saveMember(){
 }
 function deleteMember(id){
   const m=Members.one(id);
-  openConfirm('Delete Member',`Are you sure you want to delete ${m?m.name:'this member'}? This cannot be undone.`,()=>{
+  openConfirm('Delete Member',`Are you sure you want to delete ${m?esc(m.name):'this member'}? This cannot be undone.`,()=>{
     const members=Members.all();const idx=members.findIndex(m=>m.id===id);
     if(idx>-1){logActivity('Deleted','Member',members[idx].name,'ID: '+members[idx].id+' | Plan: '+(Plans.all().find(p=>p.id===members[idx].planId)||{name:'—'}).name);members[idx].status='Archived';}
     Members.save(members);toast('Member archived.');renderMembers();
   });
+}
+function renumberMembers(){
+  const all=Members.all();
+  const archived=all.filter(m=>m.status==='Archived');
+  const live=all.filter(m=>m.status!=='Archived');
+  const aIds=archived.map(m=>m.id);
+  const remap={};
+  live.forEach((m,i)=>{remap[m.id]='MEM-'+String(i+1).padStart(4,'0');});
+  const changed=live.filter(m=>remap[m.id]!==m.id).length;
+  openConfirm('Renumber Members','This will permanently delete '+archived.length+' archived member(s) and renumber members so IDs run sequentially from MEM-0001 (e.g. MEM-0009 → MEM-0006, MEM-0010 → MEM-0007). Payments, notifications, attendance and sessions are updated to match. Continue?',function(){
+    Members.save(live.map(m=>{m.id=remap[m.id];return m;}));
+    Payments.save(Payments.all().filter(p=>!aIds.includes(p.memberId)).map(p=>{if(remap[p.memberId])p.memberId=remap[p.memberId];return p;}));
+    Notifications.save(Notifications.all().filter(n=>!aIds.includes(n.memberId)).map(n=>{if(remap[n.memberId])n.memberId=remap[n.memberId];return n;}));
+    Attendance.save(Attendance.all().filter(a=>!aIds.includes(a.memberId)).map(a=>{if(remap[a.memberId])a.memberId=remap[a.memberId];return a;}));
+    Sessions.save(Sessions.all().filter(s=>!aIds.includes(s.memberId)).map(s=>{if(remap[s.memberId])s.memberId=remap[s.memberId];if(remap[s.id])s.id=remap[s.id];return s;}));
+    Members.all().forEach(m=>{if(m.qrToken||m.status==='Active'){try{Members.update(m.id,{qrToken:qrTokenFor(m.id,today())});}catch(e){}}});
+    logActivity('Renumbered','Members','Renumbered '+changed+' member(s) · removed '+archived.length+' archived');
+    renderMembers();scanRenewals();updateHeroMemberCount();renderDashboard();
+    toast('Member IDs renumbered sequentially.');
+  },'Renumber','btn-primary');
+}
+function resetAllMembers(){
+  const n=Members.count();
+  const p=Payments.count();
+  openConfirm('Reset All Members','This will permanently delete <strong>ALL '+n+' member(s)</strong> and their '+p+' payment record(s), attendance, sessions, notifications and messages. The member list will be empty — no member registered. Continue?',function(){
+    Members.save([]);
+    Payments.save([]);
+    Attendance.save([]);
+    Sessions.save([]);
+    Notifications.save([]);
+    Messages.save([]);
+    logActivity('Reset','Members','Deleted all members — list reset to empty');
+    renderMembers();scanRenewals();updateHeroMemberCount();renderDashboard();updatePendingBadge();updateQueueBadge();
+    toast('All members removed. No member registered.');
+  },'Reset All','btn-danger');
 }
 function viewMember(id){
   currentProfileId=id;
@@ -1132,46 +2083,196 @@ function viewMember(id){
   const plan=Plans.one(m.planId);
   const payments=Payments.all().filter(p=>p.memberId===id);
   const sessions=Sessions.all().filter(s=>s.memberId===id);
+  const attendance=Attendance.all().filter(a=>a.memberId===id).slice().reverse();
   const badgeCls={Active:'badge-active',Expired:'badge-expired',Suspended:'badge-suspended','Expiring Soon':'badge-expiring'}[m.status]||'';
+  const bgBadgeCls={Cleared:'badge-active',Flagged:'badge-suspended',Pending:'badge-pending'}[m.bgCheckStatus||'Pending']||'badge-pending';
   document.getElementById('profileModalBody').innerHTML=`
   <div class="profile-section">
     <div style="display:flex;align-items:center;gap:14px;margin-bottom:16px">
-      <div class="user-avatar avatar-admin" style="width:52px;height:52px;font-size:18px">${initials(m.name)}</div>
-      <div><div style="font-size:20px;font-weight:800;font-family:'Barlow Condensed',sans-serif">${m.name}</div>
-      <div style="color:var(--gray-500);font-size:12px">${m.id}</div>
-      <span class="badge ${badgeCls}" style="margin-top:4px">${m.status}</span></div>
+      <div class="user-avatar avatar-admin" style="width:52px;height:52px;border-radius:12px;flex-shrink:0;background:url('${m.avatar||''}') center/cover no-repeat;${m.avatar?'':'color:var(--gray-400);font-size:18px;line-height:52px'}">${m.avatar?'':esc(initials(m.name))}</div>
+      <div><div style="font-size:20px;font-weight:800;font-family:'Barlow Condensed',sans-serif">${esc(m.name)}</div>
+      <div style="color:var(--gray-500);font-size:12px">${esc(m.id)}</div>
+      <span class="badge ${badgeCls}" style="margin-top:4px">${esc(m.status)}</span></div>
     </div>
     <h4>Personal Information</h4>
     <div class="profile-grid">
-      <div class="profile-field"><label>Contact</label><p>${m.contact||'—'}</p></div>
-      <div class="profile-field"><label>Age / Sex</label><p>${m.age||'—'} / ${m.sex||'—'}</p></div>
-      <div class="profile-field"><label>Address</label><p>${m.address||'—'}</p></div>
-      <div class="profile-field"><label>Emergency Contact</label><p>${m.ecName||'—'} ${m.ecNum?'('+m.ecNum+')':''}</p></div>
+      <div class="profile-field"><label>Contact</label><p>${esc(m.contact||'—')}</p></div>
+      <div class="profile-field"><label>Age / Sex</label><p>${esc(m.age||'—')} / ${esc(m.sex||'—')}</p></div>
+      <div class="profile-field"><label>Address</label><p>${esc(m.address||'—')}</p></div>
+      <div class="profile-field"><label>Emergency Contact</label><p>${esc(m.ecName||'—')} ${m.ecNum?'('+esc(m.ecNum)+')':''}</p></div>
     </div>
   </div>
   <div class="profile-section">
     <h4>Membership</h4>
     <div class="profile-grid">
-      <div class="profile-field"><label>Plan</label><p>${plan?plan.name:'—'}</p></div>
+      <div class="profile-field"><label>Plan</label><p>${esc(plan?plan.name:'—')}</p></div>
       <div class="profile-field"><label>Start Date</label><p>${formatDate(m.startDate)}</p></div>
       <div class="profile-field"><label>Expiry Date</label><p>${formatDate(m.expiryDate)}</p></div>
       <div class="profile-field"><label>Days Remaining</label><p>${daysUntil(m.expiryDate)} days</p></div>
     </div>
-    ${m.notes?`<div class="profile-field" style="margin-top:10px"><label>Notes</label><p>${m.notes}</p></div>`:''}
+    ${m.notes?`<div class="profile-field" style="margin-top:10px"><label>Notes</label><p>${esc(m.notes)}</p></div>`:''}
+   </div>
+   <div class="profile-section">
+     <h4>Entrance QR — Staff Check-In</h4>
+     <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+       <div style="background:#fff;padding:10px;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,.25);width:120px;height:120px;flex-shrink:0"><canvas id="profileQrCanvas" width="100" height="100"></canvas></div>
+       <div style="flex:1;min-width:200px">
+         <p style="font-size:12px;color:var(--gray-500)">Member forgot their phone? Show this QR or check them in manually from the front desk.</p>
+         <input type="text" id="profileQrToken" readonly style="width:100%;font-family:monospace;font-size:11px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.16);border-radius:8px;padding:8px 10px;color:var(--gray-400);cursor:pointer" onclick="this.select()" placeholder="QR token">
+         <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+           <button class="btn-sm btn-primary" style="height:32px" onclick="profileCheckIn('${id}')">✓ Check In</button>
+           <button class="btn-sm btn-secondary" style="height:32px" onclick="copyMemberToken('${id}')">Copy Token</button>
+         </div>
+         <div id="profileQrStatus" style="font-size:12px;margin-top:8px;min-height:16px"></div>
+       </div>
+     </div>
+   </div>
+  <div class="profile-section">
+    <h4>Background Check</h4>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+      <span class="badge ${bgBadgeCls}">${esc(m.bgCheckStatus||'Pending')}</span>
+      ${m.bgCheckDate?`<span style="font-size:11px;color:var(--gray-500)">${formatDate(m.bgCheckDate)} · by ${esc(m.bgCheckBy||'—')}</span>`:''}
+    </div>
+    ${m.bgCheckNotes?`<div class="profile-field"><label>Notes</label><p>${esc(m.bgCheckNotes)}</p></div>`:''}
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn-sm" style="background:rgba(127,250,136,.15);color:var(--green);border:1px solid rgba(127,250,136,.4)" onclick="setBgCheck('${id}','Cleared')">✓ Cleared</button>
+      <button class="btn-sm" style="background:rgba(239,68,68,.12);color:var(--red);border:1px solid rgba(239,68,68,.4)" onclick="setBgCheck('${id}','Flagged')">⚑ Flagged</button>
+    </div>
   </div>
   <div class="profile-section">
     <h4>Payment History</h4>
-    ${payments.length?`<table style="width:100%"><thead><tr><th>ID</th><th>Plan</th><th>Amount</th><th>Date</th><th>Method</th></tr></thead><tbody>${payments.map(p=>`<tr><td>${p.id}</td><td>${p.planName}</td><td style="color:var(--green)">₱${Number(p.amount).toLocaleString()}</td><td>${formatDate(p.date)}</td><td>${p.method}</td></tr>`).join('')}</tbody></table>`:
+    ${payments.length?`<table style="width:100%"><thead><tr><th>ID</th><th>Plan</th><th>Amount</th><th>Date</th><th>Method</th></tr></thead><tbody>${payments.map(p=>`<tr><td>${esc(p.id)}</td><td>${esc(p.planName)}</td><td style="color:var(--green)">₱${Number(p.amount).toLocaleString()}</td><td>${formatDate(p.date)}</td><td>${esc(p.method)}</td></tr>`).join('')}</tbody></table>`:
     '<div class="empty-state" style="padding:20px"><div class="empty-icon">💳</div><p>No payments recorded</p></div>'}
   </div>
   <div class="profile-section">
     <h4>Session History</h4>
-    ${sessions.length?`<table style="width:100%"><thead><tr><th>Date</th><th>Trainer</th><th>Type</th><th>Status</th></tr></thead><tbody>${sessions.map(s=>`<tr><td>${formatDate(s.date)}</td><td>${s.trainerName}</td><td>${s.type}</td><td><span class="badge badge-${s.status.toLowerCase()}">${s.status}</span></td></tr>`).join('')}</tbody></table>`:
+    ${sessions.length?`<table style="width:100%"><thead><tr><th>Date</th><th>Trainer</th><th>Type</th><th>Status</th></tr></thead><tbody>${sessions.map(s=>`<tr><td>${formatDate(s.date)}</td><td>${esc(s.trainerName)}</td><td>${esc(s.type)}</td><td><span class="badge badge-${esc(s.status.toLowerCase())}">${esc(s.status)}</span></td></tr>`).join('')}</tbody></table>`:
     '<div class="empty-state" style="padding:20px"><div class="empty-icon">📅</div><p>No sessions</p></div>'}
+  </div>
+  <div class="profile-section">
+    <h4>Attendance History</h4>
+    ${attendance.length?`<table style="width:100%"><thead><tr><th>Date</th><th>Check In</th><th>Check Out</th><th>Duration</th><th>Recorded By</th></tr></thead><tbody>${attendance.map(a=>`<tr><td>${formatDate(a.date)}</td><td>${esc(a.checkIn||a.time||'—')}</td><td>${a.checkOut?esc(a.checkOut):'<span style="color:var(--gold);font-size:11px">In Gym</span>'}</td><td>${esc(a.duration||'—')}</td><td>${esc(a.recordedBy||a.scannedBy||'—')}</td></tr>`).join('')}</tbody></table>`:
+    '<div class="empty-state" style="padding:20px"><div class="empty-icon">🕐</div><p>No attendance recorded</p></div>'}
   </div>`;
+  document.getElementById('profileQrToken').value=qrTokenFor(m.id,today());
   openModal('profileModal');
+  const cm=document.getElementById('profileQrCanvas');
+  if(cm)renderQrTo(cm,qrTokenFor(m.id,today()),4);
 }
 function openEditFromProfile(){closeModal('profileModal');openMemberModal(currentProfileId);}
+function openMemberProfileEdit(){
+  const m=Members.one(currentUser.memberId||currentUser.id);
+  if(!m){toast('Member record not found.','error');return;}
+  if(m.avatar){document.getElementById('mep_avatar_preview').src=m.avatar;document.getElementById('mep_avatar_preview').style.display='block';document.getElementById('mep_avatar_clear').style.display='inline-flex';}
+  else {document.getElementById('mep_avatar_preview').src='';document.getElementById('mep_avatar_preview').style.display='none';document.getElementById('mep_avatar_clear').style.display='none';}
+  if(m.bg){document.getElementById('mep_bg_preview').src=m.bg;document.getElementById('mep_bg_preview').style.display='block';document.getElementById('mep_bg_clear').style.display='inline-flex';}
+  else {document.getElementById('mep_bg_preview').src='';document.getElementById('mep_bg_preview').style.display='none';document.getElementById('mep_bg_clear').style.display='none';}
+  document.getElementById('mep_avatar').value=m.avatar||'';
+  document.getElementById('mep_bg').value=m.bg||'';
+  const err=document.getElementById('mepError');if(err){err.textContent='';err.style.display='none';}
+  openModal('memberProfileEditModal');
+}
+function saveMemberProfileEdit(){
+  const m=Members.one(currentUser.memberId||currentUser.id);
+  if(!m){toast('Member record not found.','error');return;}
+  const avatar=document.getElementById('mep_avatar').value;
+  const bg=document.getElementById('mep_bg').value;
+  if(avatar&&avatar.length>120000){toast('Profile photo is too large — please use a smaller image.','error');return;}
+  if(bg&&bg.length>120000){toast('Background image is too large — please use a smaller image.','error');return;}
+  Members.update(m.id,{avatar:avatar||'',bg:bg||''});
+  logActivity('Updated','Member Profile',m.name+' updated profile photo');
+  closeModal('memberProfileEditModal');
+  refreshMemberHome();
+  toast('Profile photo saved.');
+}
+function refreshMemberHome(){
+  buildSidebar();
+  renderTopbar();
+  renderDashboard();
+}
+function copyMemberToken(id){
+  const t=qrTokenFor(id,today());
+  try{navigator.clipboard.writeText(t);toast('QR token copied to clipboard.');}
+  catch(e){try{prompt('Copy the member QR token:',t);}catch(_){}}
+}
+function profileCheckIn(id){
+  const m=Members.one(id);
+  const st=document.getElementById('profileQrStatus');
+  const show=(msg,ok)=>{if(st){st.innerHTML='<span style="color:'+(ok?'var(--green)':'var(--red)')+'">'+msg+'</span>';}};
+  if(!m){show('Member not found',false);return;}
+  if(m.status==='pending_payment'){show(m.name+' has NOT paid yet — send to the counter first.',false);return;}
+  if(m.status==='Archived'){show('Account archived — entry blocked.',false);return;}
+  if(daysUntil(m.expiryDate)<0){show('Plan expired on '+formatDate(m.expiryDate)+' — renew at the counter, entry blocked.',false);return;}
+  const now=new Date();
+  const last=Attendance.all().filter(a=>a.memberId===m.id).slice(-1)[0];
+  if(last&&last.date===today()&&last.checkInTs&&(now.getTime()-last.checkInTs)<QR_SCAN_DUP_WINDOW_MIN*60000){show(m.name+' already checked in at '+last.checkIn+' — duplicate blocked.',false);return;}
+  const time=now.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  Attendance.add({id:uid(),memberId:m.id,date:today(),time,checkIn:time,checkInTs:now.getTime(),checkOut:null,checkOutTs:null,duration:null,recordedBy:currentUser.name,scannedBy:currentUser.name,source:'staff'});
+  show(m.name+' checked in at '+time+'.',true);
+  toast(m.name+' checked in.');
+}
+let historySearch='';let memberHistoryTab='All';
+function renderHistory(){
+  const el=document.getElementById('panelHistory');
+  const counts={All:0,Active:0,'Expiring Soon':0,Expired:0,pending_payment:0,Archived:0};
+  const all=Members.all();
+  const payments=Payments.all();
+  const eligible=all.filter(m=>m.status!=='pending_payment'||payments.some(p=>p.memberId===m.id));
+  eligible.forEach(m=>{counts.All++;if(counts[m.status]!==undefined)counts[m.status]++;});
+  const tab=(st,label)=>`<button class="rtab ${memberHistoryTab===st?'active':''}" onclick="memberHistoryTab='${st}';renderHistory()">${label} <span class="user-tab-count">(${counts[st]})</span></button>`;
+  el.innerHTML=`
+  <div class="report-tabs">
+    ${tab('All','All Members')}
+    ${tab('Active','Active')}
+    ${tab('Expiring Soon','Expiring Soon')}
+    ${tab('Expired','Expired')}
+    ${tab('pending_payment','Pending Payment')}
+    ${tab('Archived','Archived')}
+  </div>
+  <div class="page-actions">
+    <div class="table-controls">
+      <input class="search-input" placeholder="Search by name or ID…" value="${esc(historySearch)}" oninput="historySearch=this.value;refreshHistoryTable()">
+    </div>
+    <span style="font-size:11px;color:var(--gray-500)">Permanent record of every member who availed a membership</span>
+  </div>
+  <div class="table-card" id="historyTableCard"></div>`;
+  refreshHistoryTable();
+}
+function refreshHistoryTable(){
+  const payments=Payments.all();
+  const attendance=Attendance.all();
+  const sessions=Sessions.all();
+  const plans=Plans.all();
+  let rows=Members.all().filter(m=>m.status!=='pending_payment'||payments.some(p=>p.memberId===m.id)).filter(m=>memberHistoryTab==='All'||m.status===memberHistoryTab).map(m=>{
+    const mp=payments.filter(p=>p.memberId===m.id);
+    const ma=attendance.filter(a=>a.memberId===m.id);
+    const ms=sessions.filter(s=>s.memberId===m.id);
+    const pl=plans.find(p=>p.id===m.planId);
+    const first=[...mp.map(p=>p.date),m.startDate].filter(Boolean).sort()[0]||m.createdAt||'';
+    const last=[...mp.map(p=>p.date),...ma.map(a=>a.date),m.expiryDate].filter(Boolean).sort().slice(-1)[0]||'';
+    const totalPaid=mp.reduce((s,p)=>s+Number(p.amount||0),0);
+    return{id:m.id,name:m.name,plan:pl?pl.name:'—',totalPaid,payCount:mp.length,attCount:ma.length,sessCount:ms.length,first,last,status:m.status};
+  });
+  if(historySearch){const s=historySearch.toLowerCase();rows=rows.filter(r=>r.name.toLowerCase().includes(s)||r.id.toLowerCase().includes(s));}
+  rows=rows.sort((a,b)=>String(b.last).localeCompare(String(a.last)));
+  const totalAll=rows.reduce((s,r)=>s+r.totalPaid,0);
+  const badgeCls={Active:'badge-active',Expired:'badge-expired',Suspended:'badge-suspended','Expiring Soon':'badge-expiring','pending_payment':'badge-pending',Archived:'badge-suspended'};
+  const table=document.getElementById('historyTableCard');
+  if(!table)return;
+  table.innerHTML=`
+  <div class="table-header"><h3>${memberHistoryTab==='All'?'Member History':memberHistoryTab==='pending_payment'?'Pending Payment':memberHistoryTab}</h3><span style="font-size:11px;color:var(--gray-500)">${rows.length} member(s) · Total Paid ₱${Number(totalAll).toLocaleString()}</span></div>
+  <div style="overflow-x:auto"><table style="min-width:900px"><thead><tr><th>ID</th><th>Name</th><th>Plan</th><th>Total Paid</th><th>Payments</th><th>Attendance</th><th>Sessions</th><th>First Avail</th><th>Last Avail</th><th>Status</th></tr></thead>
+  <tbody>${rows.length?rows.map(r=>`<tr style="cursor:pointer" onclick="viewMember('${r.id}')">
+    <td>${esc(r.id)}</td>
+    <td><div style="display:flex;align-items:center;gap:8px"><div class="member-avatar" style="${r.avatar?'background:url(\''+r.avatar+'\') center/cover;background-size:cover;':''}">${r.avatar?'':esc(initials(r.name))}</div>${esc(r.name)}</div></td>
+    <td>${esc(r.plan)}</td>
+    <td style="color:var(--green);font-weight:600">₱${Number(r.totalPaid).toLocaleString()}</td>
+    <td>${r.payCount}</td><td>${r.attCount}</td><td>${r.sessCount}</td>
+    <td>${formatDate(r.first)}</td><td>${formatDate(r.last)}</td>
+    <td><span class="badge ${badgeCls[r.status]||'badge-suspended'}">${esc(r.status)}</span></td>
+  </tr>`).join(''):`<tr><td colspan="10"><div class="empty-state"><div class="empty-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></div><p>No member history found</p></div></td></tr>`}
+  </tbody></table></div>`;
+}
 
 // ======================================================================
 // PANEL: BILLING
@@ -1180,13 +2281,13 @@ let billingSearch='';let billingFromDate='';let billingToDate='';let billingPlan
 function renderBilling(){
   const el=document.getElementById('panelBilling');
   const plans=Plans.all();
-  const planOpts=plans.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+  const planOpts=plans.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
   el.innerHTML=`
   <div class="page-actions">
     <div class="table-controls">
-      <input class="search-input" placeholder="Search member…" value="${billingSearch}" oninput="billingSearch=this.value;billingPage=1;refreshBillingTable()">
-      <input type="date" class="search-input" style="min-width:130px" value="${billingFromDate}" onchange="billingFromDate=this.value;billingPage=1;refreshBillingTable()">
-      <input type="date" class="search-input" style="min-width:130px" value="${billingToDate}" onchange="billingToDate=this.value;billingPage=1;refreshBillingTable()">
+      <input class="search-input" placeholder="Search member…" value="${esc(billingSearch)}" oninput="billingSearch=this.value;billingPage=1;refreshBillingTable()">
+      <input type="date" class="search-input" style="min-width:130px" value="${esc(billingFromDate)}" onchange="billingFromDate=this.value;billingPage=1;refreshBillingTable()">
+      <input type="date" class="search-input" style="min-width:130px" value="${esc(billingToDate)}" onchange="billingToDate=this.value;billingPage=1;refreshBillingTable()">
       <select class="filter-sel" onchange="billingPlanFilter=this.value;billingPage=1;refreshBillingTable()">
         <option value="All">All Plans</option>${planOpts}
       </select>
@@ -1205,12 +2306,12 @@ function refreshBillingTable(){
   const perPage=10;const total=data.length;const pages=Math.ceil(total/perPage)||1;
   const slice=data.slice((billingPage-1)*perPage,billingPage*perPage);
   const rows=slice.length?slice.map(p=>`<tr>
-    <td>${p.id}</td><td>${p.memberName}</td><td>${p.planName}</td>
+    <td>${esc(p.id)}</td><td>${esc(p.memberName)}</td><td>${esc(p.planName)}</td>
     <td style="color:var(--green);font-weight:600">₱${Number(p.amount).toLocaleString()}</td>
     <td>${formatDate(p.date)}</td><td>${formatDate(p.newExpiry)}</td>
-    <td>${p.recordedBy||'—'}</td><td>${p.method||'—'}</td>
+    <td>${esc(p.recordedBy||'—')}</td><td>${esc(p.method||'—')}</td>
     <td><span class="badge badge-paid">Paid</span></td>
-    <td>${p.source==='renewal'?'<span style="font-size:10px;font-weight:800;padding:3px 8px;border-radius:5px;background:rgba(251,191,36,.15);color:var(--gold);letter-spacing:.5px;border:1px solid rgba(251,191,36,.3)">🔄 RENEWAL</span>':p.syncedAt?'<span style="font-size:10px;font-weight:700;padding:3px 8px;border-radius:5px;background:rgba(170,181,255,.12);color:#aab5ff;letter-spacing:.5px;border:1px solid rgba(170,181,255,.25)" title="Auto-synced when member info was edited">🔗 SYNCED</span>':'<span style="font-size:10px;color:var(--gray-500)">—</span>'}</td>
+    <td>${p.source==='renewal'?'<span style="font-size:10px;font-weight:800;padding:3px 8px;border-radius:5px;background:rgba(251,191,36,.15);color:var(--gold);letter-spacing:.5px;border:1px solid rgba(251,191,36,.3)">🔄 RENEWAL</span>':p.syncedAt?'<span style="font-size:10px;font-weight:700;padding:3px 8px;border-radius:5px;background:rgba(170,181,255,.12);color:#d7ddd8;letter-spacing:.5px;border:1px solid rgba(170,181,255,.25)" title="Auto-synced when member info was edited">🔗 SYNCED</span>':'<span style="font-size:10px;color:var(--gray-500)">—</span>'}</td>
     <td><div class="td-actions"><button class="btn-icon" title="View Receipt" onclick="viewReceipt('${p.id}')">🧾</button></div></td>
   </tr>`).join(''):`<tr><td colspan="10"><div class="empty-state"><div class="empty-icon">💳</div><p>No payments found</p></div></td></tr>`;
   let pag='';if(pages>1){pag=`<div class="pagination"><button class="page-btn" onclick="billingPage=${billingPage-1};refreshBillingTable()" ${billingPage===1?'disabled':''}>‹</button>${Array.from({length:pages},(_,i)=>`<button class="page-btn ${i+1===billingPage?'active':''}" onclick="billingPage=${i+1};refreshBillingTable()">${i+1}</button>`).join('')}<button class="page-btn" onclick="billingPage=${billingPage+1};refreshBillingTable()" ${billingPage===pages?'disabled':''}>›</button><span class="page-info">${total} records</span></div>`;}
@@ -1231,13 +2332,20 @@ function openPaymentModal(prefillMemberId=null){
   document.getElementById('pf_date').value=today();
   document.getElementById('pf_method').value='';
   document.getElementById('pf_notes').value='';
+  const refWrap=document.getElementById('pf_refWrap');
+  if(refWrap){refWrap.style.display='none';const ref=document.getElementById('pf_reference');if(ref)ref.value='';}
   const plans=Plans.all().filter(p=>p.status==='Active');
-  document.getElementById('pf_plan').innerHTML=`<option value="">Select plan</option>`+plans.map(p=>`<option value="${p.id}">${p.name} — ₱${p.price}</option>`).join('');
+  document.getElementById('pf_plan').innerHTML=`<option value="">Select plan</option>`+plans.map(p=>`<option value="${p.id}">${esc(p.name)} — ₱${p.price}</option>`).join('');
   if(prefillMemberId){
     const m=Members.one(prefillMemberId);
     if(m){document.getElementById('pf_memberSearch').value=m.name;document.getElementById('pf_memberId').value=m.id;if(m.planId){document.getElementById('pf_plan').value=m.planId;onPayPlanChange();}}
   }
   openModal('paymentModal');
+}
+function togglePfReference(){
+  const method=document.getElementById('pf_method').value;
+  const wrap=document.getElementById('pf_refWrap');
+  if(wrap)wrap.style.display=method==='GCash'?'block':'none';
 }
 function openPaymentForMember(id){_renewalPaymentSource=id;openPaymentModal(id);}
 function filterMemberDropdown(val){
@@ -1245,7 +2353,7 @@ function filterMemberDropdown(val){
   if(!val){list.style.display='none';return;}
   const members=Members.all().filter(m=>m.status!=='Archived'&&m.name.toLowerCase().includes(val.toLowerCase())).slice(0,8);
   if(!members.length){list.style.display='none';return;}
-  list.innerHTML=members.map(m=>`<div style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid rgba(255,255,255,.05)" onmousedown="selectPayMember('${m.id}','${m.name.replace(/'/g,"\\'")}','${m.planId||''}')" onmouseover="this.style.background='rgba(114,133,255,.1)'" onmouseout="this.style.background=''">${m.name} <span style="color:var(--gray-500);font-size:11px">${m.id}</span></div>`).join('');
+  list.innerHTML=members.map(m=>`<div style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid rgba(255,255,255,.05)" onmousedown="selectPayMember('${m.id}','${esc(m.name).replace(/'/g,"&#39;")}','${m.planId||''}')" onmouseover="this.style.background='rgba(179,188,181,.1)'" onmouseout="this.style.background=''">${esc(m.name)} <span style="color:var(--gray-500);font-size:11px">${esc(m.id)}</span></div>`).join('');
   list.style.display='block';
 }
 function selectPayMember(id,name,planId){
@@ -1271,6 +2379,8 @@ function savePayment(){
   err.style.display='none';
   if(!memberId||!planId||!amount||!date||!method){err.textContent='Please fill in all required fields.';err.style.display='block';return;}
   if(amount<=0){err.textContent='Invalid payment amount. Please enter a valid amount greater than zero.';err.style.display='block';return;}
+  const reference=document.getElementById('pf_reference')?document.getElementById('pf_reference').value.trim():'';
+  if(method==='GCash'&&!reference){err.textContent='Please enter the GCash reference number.';err.style.display='block';return;}
   const member=Members.one(memberId);
   const plan=Plans.one(planId);
   const newExpiry=addMonths(date,plan?plan.duration:1);
@@ -1281,26 +2391,29 @@ function savePayment(){
     +'<div style="margin-top:12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:12px 14px;font-size:12px;line-height:1.9">'
     +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.06)">'
     +'<div style="width:36px;height:36px;border-radius:8px;background:var(--orange);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#fff;flex-shrink:0">'+memberInitials+'</div>'
-    +'<div><div style="font-weight:700;color:var(--white);font-size:13px">'+(member?member.name:'Unknown')+'</div>'
-    +'<div style="color:var(--gray-500);font-size:11px;font-family:monospace">'+(member?member.id:'')+'</div></div>'
-    +(fromRenewal?'<span style="margin-left:auto;font-size:9px;font-weight:800;padding:3px 8px;border-radius:4px;background:rgba(251,191,36,.15);color:var(--gold);text-transform:uppercase;border:1px solid rgba(251,191,36,.3)">🔄 RENEWAL</span>':'<span style="margin-left:auto;font-size:9px;font-weight:800;padding:3px 8px;border-radius:4px;background:rgba(52,211,153,.12);color:var(--green);text-transform:uppercase">NEW</span>')
+    +'<div><div style="font-weight:700;color:var(--white);font-size:13px">'+(member?esc(member.name):'Unknown')+'</div>'
+    +'<div style="color:var(--gray-500);font-size:11px;font-family:monospace">'+(member?esc(member.id):'')+'</div></div>'
+    +(fromRenewal?'<span style="margin-left:auto;font-size:9px;font-weight:800;padding:3px 8px;border-radius:4px;background:rgba(251,191,36,.15);color:var(--gold);text-transform:uppercase;border:1px solid rgba(251,191,36,.3)">🔄 RENEWAL</span>':'<span style="margin-left:auto;font-size:9px;font-weight:800;padding:3px 8px;border-radius:4px;background:rgba(127,250,136,.12);color:var(--green);text-transform:uppercase">NEW</span>')
     +'</div>'
-    +'<div><span style="color:var(--gray-500);width:100px;display:inline-block">Plan:</span> <strong style="color:var(--white)">'+(plan?plan.name:'Unknown')+'</strong></div>'
-    +'<div><span style="color:var(--gray-500);width:100px;display:inline-block">Method:</span> <strong style="color:var(--white)">'+method+'</strong></div>'
+    +'<div><span style="color:var(--gray-500);width:100px;display:inline-block">Plan:</span> <strong style="color:var(--white)">'+(plan?esc(plan.name):'Unknown')+'</strong></div>'
+    +'<div><span style="color:var(--gray-500);width:100px;display:inline-block">Method:</span> <strong style="color:var(--white)">'+esc(method)+'</strong></div>'
     +'<div><span style="color:var(--gray-500);width:100px;display:inline-block">Amount:</span> <strong style="color:var(--green)">₱'+Number(amount).toLocaleString()+'</strong></div>'
     +'<div><span style="color:var(--gray-500);width:100px;display:inline-block">Payment Date:</span> <strong style="color:var(--white)">'+formatDate(date)+'</strong></div>'
     +'<div><span style="color:var(--gray-500);width:100px;display:inline-block">New Expiry:</span> <strong style="color:var(--white)">'+formatDate(newExpiry)+'</strong></div>'
     +'</div>'
-    +'<div style="margin-top:10px;font-size:11px;color:#aab5ff;background:rgba(114,133,255,.06);border:1px solid rgba(114,133,255,.2);border-radius:6px;padding:8px 12px">&#128161; This will record the payment and update the member expiry date.</div>';
+    +'<div style="margin-top:10px;font-size:11px;color:#d7ddd8;background:rgba(179,188,181,.06);border:1px solid rgba(179,188,181,.2);border-radius:6px;padding:8px 12px">&#128161; This will record the payment and update the member expiry date.</div>';
   openConfirm(confirmTitle,confirmMsg,function(){
     const payments=Payments.all();
     const newId=nextId(KEY.payments,'PAY');
-    payments.push({id:newId,memberId,memberName:member?member.name:'Unknown',planId,planName:plan?plan.name:'Unknown',amount,date,newExpiry,method,notes,recordedBy:currentUser.name,recordedByUsername:currentUser.username,status:'Paid',source:fromRenewal?'renewal':'billing',createdAt:today()});
+    payments.push({id:newId,memberId,memberName:member?member.name:'Unknown',planId,planName:plan?plan.name:'Unknown',amount,date,newExpiry,method,reference:sanitizeText(reference),notes:sanitizeText(notes),recordedBy:currentUser.name,recordedByUsername:currentUser.username,staffId:currentUser.id,status:'Paid',source:fromRenewal?'renewal':'billing',timestamp:Date.now(),createdAt:today()});
     Payments.save(payments);
     const members=Members.all();
     const idx=members.findIndex(m=>m.id===memberId);
-    if(idx>-1){members[idx].planId=planId;members[idx].expiryDate=newExpiry;members[idx].status='Active';}
+    if(idx>-1){members[idx].planId=planId;members[idx].expiryDate=newExpiry;members[idx].status='Active';members[idx].planStart=date;members[idx].qrNonce=newQrNonce(memberId);}
     Members.save(members);
+    const live=Members.one(memberId);
+    if(live)Members.update(memberId,{qrToken:qrTokenFor(memberId,today())});
+    resolveNotifsForMember(memberId);
     _dismissedIds.add(memberId);
     document.getElementById('paymentModal').dataset.fromRenewal='';
     toast('Payment recorded successfully.');
@@ -1312,7 +2425,7 @@ function savePayment(){
 }
 function deletePayment(id){
   const p=Payments.one(id);if(!p)return;
-  openConfirm('Delete Payment',`Delete payment record ${p.id} for ${p.memberName}? This cannot be undone.`,()=>{
+  openConfirm('Delete Payment',`Delete payment record ${p.id} for ${esc(p.memberName)}? This cannot be undone.`,()=>{
     const payments=Payments.all().filter(x=>x.id!==id);
     Payments.save(payments);
     toast('Payment record deleted.','info');
@@ -1329,9 +2442,13 @@ function openEditPayment(id){
   document.getElementById('ep_date').value=p.date;
   document.getElementById('ep_notes').value=p.notes||'';
   const plans=Plans.all().filter(pl=>pl.status==='Active');
-  document.getElementById('ep_plan').innerHTML=`<option value="">Select plan</option>`+plans.map(pl=>`<option value="${pl.id}">${pl.name} — ₱${pl.price}</option>`).join('');
+  document.getElementById('ep_plan').innerHTML=`<option value="">Select plan</option>`+plans.map(pl=>`<option value="${pl.id}">${esc(pl.name)} — ₱${pl.price}</option>`).join('');
   document.getElementById('ep_plan').value=p.planId;
   document.getElementById('ep_method').value=p.method||'';
+  const epRef=document.getElementById('ep_reference');
+  if(epRef)epRef.value=p.reference||'';
+  const epRefWrap=document.getElementById('ep_refWrap');
+  if(epRefWrap)epRefWrap.style.display=(p.method||'')==='GCash'?'block':'none';
   openModal('editPaymentModal');
 }
 function onEditPlanChange(){
@@ -1352,17 +2469,22 @@ function saveEditPayment(){
   err.style.display='none';
   if(!planId||!amount||!date||!method){err.textContent='Please fill in all required fields.';err.style.display='block';return;}
   if(amount<=0){err.textContent='Invalid amount. The payment amount must be greater than zero.';err.style.display='block';return;}
+  const reference=document.getElementById('ep_reference')?document.getElementById('ep_reference').value.trim():'';
+  if(method==='GCash'&&!reference){err.textContent='Please enter the GCash reference number.';err.style.display='block';return;}
   const plan=Plans.one(planId);
   const newExpiry=addMonths(date,plan?plan.duration:1);
   const payments=Payments.all();
   const idx=payments.findIndex(p=>p.id===id);
   if(idx<0){err.textContent='Payment record not found. Please refresh and try again.';err.style.display='block';return;}
-  payments[idx]={...payments[idx],planId,planName:plan?plan.name:payments[idx].planName,amount,date,newExpiry,method,notes,editedBy:currentUser.username,editedAt:today()};
+  payments[idx]={...payments[idx],planId,planName:plan?plan.name:payments[idx].planName,amount,date,newExpiry,method,reference,notes,editedBy:currentUser.username,editedAt:today()};
   Payments.save(payments);
   // Update member plan and expiry
   const members=Members.all();const midx=members.findIndex(m=>m.id===memberId);
-  if(midx>-1){members[midx].planId=planId;members[midx].expiryDate=newExpiry;members[midx].status='Active';}
+  if(midx>-1){members[midx].planId=planId;members[midx].expiryDate=newExpiry;members[midx].status='Active';members[midx].planStart=date;members[midx].qrNonce=newQrNonce(memberId);}
   Members.save(members);
+  const live=Members.one(memberId);
+  if(live)Members.update(memberId,{qrToken:qrTokenFor(memberId,today())});
+  resolveNotifsForMember(memberId);
   _dismissedIds.add(memberId);
   toast('Payment updated successfully.','success');
   closeModal('editPaymentModal');renderBilling();scanRenewals();
@@ -1393,7 +2515,7 @@ function viewReceipt(id){
           <rect x="13" y="17" width="5" height="14" rx="2" fill="white"/>
           <rect x="30" y="17" width="5" height="14" rx="2" fill="white"/>
           <rect x="18" y="22" width="12" height="4" rx="2" fill="white"/>
-          <defs><linearGradient id="rcGrad" x1="0" y1="0" x2="48" y2="48"><stop offset="0%" stop-color="#f4913f"/><stop offset="100%" stop-color="#d1621f"/></linearGradient></defs>
+          <defs><linearGradient id="rcGrad" x1="0" y1="0" x2="48" y2="48"><stop offset="0%" stop-color="#7ffa88"/><stop offset="100%" stop-color="#4ade80"/></linearGradient></defs>
         </svg>
       </div>
       <h2>FITCORE <span>GMS</span></h2>
@@ -1405,10 +2527,10 @@ function viewReceipt(id){
       <div><span>Payment Date</span><strong>${formatDate(p.date)}</strong></div>
     </div>
     <div class="receipt-body">
-      <div class="receipt-row"><span>Member</span><strong>${displayMemberName}</strong></div>
-      <div class="receipt-row"><span>Member ID</span><strong>${p.memberId}</strong></div>
-      <div class="receipt-row"><span>Membership Plan</span><strong>${p.planName}</strong></div>
-      <div class="receipt-row"><span>Payment Method</span><strong>${p.method}</strong></div>
+      <div class="receipt-row"><span>Member</span><strong>${esc(displayMemberName)}</strong></div>
+      <div class="receipt-row"><span>Member ID</span><strong>${esc(p.memberId)}</strong></div>
+      <div class="receipt-row"><span>Membership Plan</span><strong>${esc(p.planName)}</strong></div>
+      <div class="receipt-row"><span>Payment Method</span><strong>${esc(p.method)}</strong></div>
       <div class="receipt-row"><span>New Expiry Date</span><strong>${formatDate(p.newExpiry)}</strong></div>
     </div>
     <div class="receipt-total">
@@ -1416,7 +2538,7 @@ function viewReceipt(id){
       <strong>&#8369;${Number(p.amount).toLocaleString()}</strong>
     </div>
     <div class="receipt-foot">
-      <div class="receipt-footer-note">Recorded by <strong>${staffDisplay}</strong> &middot; ${formatDateTime(p.createdAt)}</div>
+      <div class="receipt-footer-note">Recorded by <strong>${esc(staffDisplay)}</strong> &middot; ${formatDateTime(p.createdAt)}</div>
       <div class="receipt-barcode" aria-hidden="true"></div>
       <div class="receipt-thanks">Train hard &middot; Stay strong &middot; See you at FitCore</div>
     </div>
@@ -1433,13 +2555,13 @@ function renderSchedule(){
   const users=Users.all().filter(u=>u.role==='trainer');
   const canCreate=currentUser.role==='staff'||currentUser.role==='admin';
   const isTrainer=currentUser.role==='trainer';
+  if(isTrainer)schedTrainerFilter=currentUser.id;
   // Deduplicate trainers by ID
   const uniqueTrainers=users.filter((u,i,a)=>a.findIndex(x=>x.id===u.id)===i);
   const trainerOpts=(isTrainer
-    ? `<option value="${currentUser.id}" ${schedTrainerFilter===currentUser.id?'selected':''}>My Schedule</option><option value="all" ${schedTrainerFilter==='all'?'selected':''}>All Trainers</option>`
-      + uniqueTrainers.filter(u=>u.id!==currentUser.id).map(u=>`<option value="${u.id}" ${schedTrainerFilter===u.id?'selected':''}>${u.name}</option>`).join('')
+    ? `<option value="${currentUser.id}" selected>My Schedule</option>`
     : `<option value="all" ${schedTrainerFilter==='all'?'selected':''}>All Trainers</option>`
-      + uniqueTrainers.map(u=>`<option value="${u.id}" ${schedTrainerFilter===u.id?'selected':''}>${u.name}</option>`).join('')
+      + uniqueTrainers.map(u=>`<option value="${u.id}" ${schedTrainerFilter===u.id?'selected':''}>${esc(u.name)}</option>`).join('')
   );
   const filterLabel=isTrainer?'<span style="font-size:10px;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:1px;align-self:center">View:</span>':'';
   el.innerHTML=`
@@ -1453,7 +2575,7 @@ function renderSchedule(){
     <select class="filter-sel" onchange="schedTrainerFilter=this.value;renderSchedule()">
       ${trainerOpts}
     </select>
-    <input class="search-input" placeholder="Search member name…" value="${schedMemberSearch}" oninput="schedMemberSearch=this.value;if(schedView==='list'){renderListView();}" style="min-width:180px">
+    <input class="search-input" placeholder="Search member name…" value="${esc(schedMemberSearch)}" oninput="schedMemberSearch=this.value;if(schedView==='list'){renderListView();}" style="min-width:180px">
     ${canCreate?`<button class="btn-primary" style="margin-left:auto" onclick="openSessionModal()">+ Create Session</button>`:''}
   </div>
   <div id="schedContent"></div>`;
@@ -1466,23 +2588,23 @@ function renderTrainerProfile(){
   const completed=sessions.filter(s=>s.status==='Completed').length;
   const cancelled=sessions.filter(s=>s.status==='Cancelled').length;
   const todaySessions=sessions.filter(s=>s.date===today()&&s.status==='Scheduled').length;
-  const ini=u.name.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
+  const ini=u.avatar?`<img src="${u.avatar}" class="trainer-avatar-lg" style="background-size:cover;background-position:center;background-repeat:no-repeat">`:u.name.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
   const specs=Array.isArray(u.specializations)&&u.specializations.length?u.specializations:[];
   const days=Array.isArray(u.availableDays)&&u.availableDays.length?u.availableDays:[];
   const hours=(u.availableFrom&&u.availableTo)?`${u.availableFrom} – ${u.availableTo}`:'';
   const displayName=u.coachName||u.name;
   return`<div class="trainer-profile-card">
-    <div class="trainer-avatar-lg">${ini}</div>
+    ${u.avatar?`<div class="trainer-avatar-lg" style="background-image:url('${u.avatar}')"></div>`:`<div class="trainer-avatar-lg">${ini}</div>`}
     <div class="trainer-profile-info" style="flex:1">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px">
-        <div class="trainer-profile-name" style="margin-bottom:0">${displayName}</div>
-        ${u.coachName&&u.coachName!==u.name?`<div style="font-size:12px;color:var(--gray-500)">(${u.name})</div>`:''}
-        <button onclick="openTrainerEditModal()" style="background:rgba(114,133,255,.12);border:1px solid rgba(114,133,255,.3);color:var(--orange);border-radius:7px;padding:5px 13px;font-size:11px;font-weight:700;cursor:pointer;transition:.2s;letter-spacing:.5px;text-transform:uppercase" onmouseover="this.style.background='var(--orange)';this.style.color='#fff'" onmouseout="this.style.background='rgba(114,133,255,.12)';this.style.color='var(--orange)'">&#9998; Edit Profile</button>
+        <div class="trainer-profile-name" style="margin-bottom:0">${esc(displayName)}</div>
+        ${u.coachName&&u.coachName!==u.name?`<div style="font-size:12px;color:var(--gray-500)">(${esc(u.name)})</div>`:''}
+        <button onclick="openTrainerEditModal()" style="background:rgba(179,188,181,.12);border:1px solid rgba(179,188,181,.3);color:var(--orange);border-radius:7px;padding:5px 13px;font-size:11px;font-weight:700;cursor:pointer;transition:.2s;letter-spacing:.5px;text-transform:uppercase" onmouseover="this.style.background='var(--orange)';this.style.color='#fff'" onmouseout="this.style.background='rgba(179,188,181,.12)';this.style.color='var(--orange)'">&#9998; Edit Profile</button>
       </div>
-      <span class="trainer-profile-role">&#9679; Certified Trainer &middot; @${u.username}</span>
-      ${specs.length?`<div style="display:flex;flex-wrap:wrap;gap:5px;margin:8px 0 4px">${specs.map(s=>`<span style="background:rgba(114,133,255,.1);border:1px solid rgba(114,133,255,.22);color:var(--orange);border-radius:5px;padding:3px 9px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px">${s}</span>`).join('')}</div>`:''}
-      ${days.length||hours?`<div style="font-size:11px;color:var(--gray-500);margin-bottom:8px">&#9200; ${days.join(', ')}${hours?' &middot; '+hours:''}</div>`:''}
-      ${u.bio?`<div style="font-size:12px;color:var(--gray-300);font-style:italic;margin-bottom:10px;line-height:1.5">&ldquo;${u.bio}&rdquo;</div>`:''}
+      <span class="trainer-profile-role">&#9679; Certified Trainer &middot; @${esc(u.username)}</span>
+      ${specs.length?`<div style="display:flex;flex-wrap:wrap;gap:5px;margin:8px 0 4px">${specs.map(s=>`<span style="background:rgba(179,188,181,.1);border:1px solid rgba(179,188,181,.22);color:var(--orange);border-radius:5px;padding:3px 9px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px">${esc(s)}</span>`).join('')}</div>`:''}
+      ${days.length||hours?`<div style="font-size:11px;color:var(--gray-500);margin-bottom:8px">&#9200; ${days.map(esc).join(', ')}${hours?' &middot; '+esc(hours):''}</div>`:''}
+      ${u.bio?`<div style="font-size:12px;color:var(--gray-300);font-style:italic;margin-bottom:10px;line-height:1.5">&ldquo;${esc(u.bio)}&rdquo;</div>`:''}
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
         <span class="trainer-session-badge tsb-scheduled">&#128336; ${scheduled} Scheduled</span>
         <span class="trainer-session-badge tsb-completed">&#10003; ${completed} Completed</span>
@@ -1497,14 +2619,21 @@ function renderTrainerProfile(){
     </div>
     <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end;min-width:140px">
       <div style="font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:var(--gray-500);margin-bottom:4px">Account Info</div>
-      <div style="font-size:12px;color:var(--gray-300)">&#128222; ${u.contact||'&mdash;'}</div>
-      <div style="font-size:12px;color:var(--gray-500);font-family:monospace">@${u.username}</div>
+      <div style="font-size:12px;color:var(--gray-300)">&#128222; ${esc(u.contact||'&mdash;')}</div>
+      <div style="font-size:12px;color:var(--gray-500);font-family:monospace">@${esc(u.username)}</div>
       <div style="margin-top:8px"><span class="badge badge-trainer">&#9679; Active</span></div>
     </div>
   </div>`;
 }
 function openTrainerEditModal(){
   const u=currentUser;
+  if(u.avatar){
+    document.getElementById('tep_avatar').value=u.avatar||'';
+    document.getElementById('tep_avatar_preview').src=u.avatar;document.getElementById('tep_avatar_preview').style.display='block';
+  } else {
+    document.getElementById('tep_avatar').value='';
+    document.getElementById('tep_avatar_preview').style.display='none';
+  }
   document.getElementById('tep_fullname').value=u.name||'';
   document.getElementById('tep_coachname').value=u.coachName||'';
   document.getElementById('tep_bio').value=u.bio||'';
@@ -1522,6 +2651,7 @@ function openTrainerEditModal(){
 function saveTrainerProfile(){
   const fullname=document.getElementById('tep_fullname').value.trim();
   const coachname=document.getElementById('tep_coachname').value.trim();
+  const avatar=document.getElementById('tep_avatar').value;
   const bio=document.getElementById('tep_bio').value.trim();
   const specs=[...document.querySelectorAll('#tep_specs input[type=checkbox]:checked')].map(c=>c.value);
   const days=[...document.querySelectorAll('#tep_days input[type=checkbox]:checked')].map(c=>c.value);
@@ -1540,35 +2670,60 @@ function saveTrainerProfile(){
   users[idx].availableDays=days;
   users[idx].availableFrom=from;
   users[idx].availableTo=to;
+  users[idx].avatar=avatar||'';
   Users.save(users);
   currentUser={...currentUser,...users[idx]};
   setSession(currentUser);
   const sn=document.getElementById('sideUserName');
   if(sn)sn.textContent=fullname;
-  const ta=document.getElementById('topAvatar');
-  if(ta)ta.textContent=initials(fullname);
-  const sa=document.getElementById('sideUserAvatar');
-  if(sa)sa.textContent=initials(fullname);
+  setUserAvatar(document.getElementById('sideUserAvatar'),fullname,avatar||'');
+  setUserAvatar(document.getElementById('topAvatar'),fullname,avatar||'');
   closeModal('trainerEditProfileModal');
   toast('Profile updated successfully!','success');
   renderSchedule();
 }
+function updateSepAvatar(name){
+  const av=document.getElementById('sep_avatar_initials');
+  const img=document.getElementById('sep_avatar_preview');
+  const hidden=document.getElementById('sep_avatar').value;
+  if(hidden&&hidden.length>20){
+    if(av)av.style.backgroundImage='url("'+hidden+'")';
+    if(av)av.textContent='';
+    if(img){img.src=hidden;img.style.display='block';}
+  } else {
+    if(av){av.style.backgroundImage='';av.textContent=initials(name||currentUser.name);}
+    if(img)img.style.display='none';
+  }
+  const dn=document.getElementById('sep_display_name');
+  if(dn)dn.textContent=name||currentUser.name;
+}
 function openStaffEditModal(){
   if(!currentUser)return;
-  // Only staff and admin use this modal; trainers use their own
+  if(currentUser.role==='member'){openMemberProfileEdit();return;}
   if(currentUser.role==='trainer'){openTrainerEditModal();return;}
-  const u=currentUser;
+  const u={...currentUser};
+  if(u.avatar){
+    document.getElementById('sep_avatar').value=u.avatar||'';
+    document.getElementById('sep_avatar_preview').src=u.avatar;document.getElementById('sep_avatar_preview').style.display='block';
+    document.getElementById('sep_avatar_initials').style.backgroundImage='url("'+u.avatar+'")';document.getElementById('sep_avatar_initials').textContent='';
+  } else {
+    document.getElementById('sep_avatar').value='';
+    document.getElementById('sep_avatar_preview').style.display='none';
+    document.getElementById('sep_avatar_initials').style.backgroundImage='';document.getElementById('sep_avatar_initials').textContent=initials(u.name);
+  }
   document.getElementById('sep_name').value=u.name||'';
   document.getElementById('sep_contact').value=u.contact||'';
-  document.getElementById('sep_avatar').textContent=initials(u.name);
   document.getElementById('sep_display_name').textContent=u.name;
   document.getElementById('sep_display_username').textContent='@'+u.username;
+  const badge=document.getElementById('sep_role_badge');
+  if(badge){badge.textContent=u.role==='admin'?'Admin':'Staff';}
   document.getElementById('sepError').style.display='none';
   openModal('staffEditProfileModal');
 }
 function saveStaffProfile(){
   const name=document.getElementById('sep_name').value.trim();
   const contact=document.getElementById('sep_contact').value.trim();
+  const avatar=document.getElementById('sep_avatar').value;
   const errEl=document.getElementById('sepError');
   errEl.style.display='none';
   if(!name){errEl.textContent='Full name is required.';errEl.style.display='block';return;}
@@ -1577,15 +2732,14 @@ function saveStaffProfile(){
   if(idx<0){errEl.textContent='User not found.';errEl.style.display='block';return;}
   users[idx].name=name;
   users[idx].contact=contact;
+  users[idx].avatar=avatar||'';
   Users.save(users);
-  currentUser={...currentUser,name,contact};
+  currentUser={...currentUser,name,contact,avatar:avatar||''};
   setSession(currentUser);
   const sn=document.getElementById('sideUserName');
   if(sn)sn.textContent=name;
-  const ta=document.getElementById('topAvatar');
-  if(ta)ta.textContent=initials(name);
-  const sa=document.getElementById('sideUserAvatar');
-  if(sa)sa.textContent=initials(name);
+  setUserAvatar(document.getElementById('sideUserAvatar'),name,avatar||'');
+  setUserAvatar(document.getElementById('topAvatar'),name,avatar||'');
   closeModal('staffEditProfileModal');
   toast('Profile updated successfully!','success');
 }
@@ -1599,9 +2753,9 @@ function viewSession(id){
   const sessions=Sessions.all();
   const s=sessions.find(x=>x.id===id);
   if(!s)return;
-  const statusColor=s.status==='Completed'?'#34d399':s.status==='Cancelled'?'#f87171':'#fbbf24';
+  const statusColor=s.status==='Completed'?'#7ffa88':s.status==='Cancelled'?'#ef4444':'#fbbf24';
   const statusIcon=s.status==='Completed'?'✓ Completed':s.status==='Cancelled'?'✕ Cancelled':'● Scheduled';
-  const statusBg=s.status==='Completed'?'rgba(52,211,153,.12)':s.status==='Cancelled'?'rgba(248,113,113,.12)':'rgba(251,191,36,.12)';
+  const statusBg=s.status==='Completed'?'rgba(127,250,136,.12)':s.status==='Cancelled'?'rgba(239,68,68,.12)':'rgba(251,191,36,.12)';
   const isMySession=currentUser.role==='trainer'&&s.trainerId===currentUser.id;
   const body=document.getElementById('sessionInfoBody');
   body.innerHTML=`
@@ -1609,7 +2763,7 @@ function viewSession(id){
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
         <div>
           <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--gray-500);margin-bottom:4px">Session Type</div>
-          <div style="font-size:18px;font-weight:800;color:var(--white)">${s.type||'—'}</div>
+          <div style="font-size:18px;font-weight:800;color:var(--white)">${esc(s.type||'—')}</div>
         </div>
         <div style="background:${statusBg};border:1px solid ${statusColor}44;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:800;color:${statusColor};letter-spacing:.5px;text-transform:uppercase">${statusIcon}</div>
       </div>
@@ -1617,11 +2771,11 @@ function viewSession(id){
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
         <div style="background:var(--navy-700);border-radius:8px;padding:14px">
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--gray-500);margin-bottom:6px">👤 Member</div>
-          <div style="font-size:14px;font-weight:700;color:var(--white)">${s.memberName||'—'}</div>
+          <div style="font-size:14px;font-weight:700;color:var(--white)">${esc(s.memberName||'—')}</div>
         </div>
         <div style="background:var(--navy-700);border-radius:8px;padding:14px">
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--gray-500);margin-bottom:6px">🏋️ Trainer</div>
-          <div style="font-size:14px;font-weight:700;color:var(--white)">${s.trainerName||'—'}</div>
+          <div style="font-size:14px;font-weight:700;color:var(--white)">${esc(s.trainerName||'—')}</div>
         </div>
         <div style="background:var(--navy-700);border-radius:8px;padding:14px">
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--gray-500);margin-bottom:6px">📅 Date</div>
@@ -1629,26 +2783,26 @@ function viewSession(id){
         </div>
         <div style="background:var(--navy-700);border-radius:8px;padding:14px">
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--gray-500);margin-bottom:6px">🕐 Time</div>
-          <div style="font-size:14px;font-weight:700;color:var(--white)">${s.start} – ${s.end}</div>
+          <div style="font-size:14px;font-weight:700;color:var(--white)">${esc(s.start)} – ${esc(s.end)}</div>
         </div>
       </div>
-      ${s.notes?`<div style="background:var(--navy-700);border-radius:8px;padding:14px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--gray-500);margin-bottom:6px">📝 Notes</div><div style="font-size:13px;color:var(--gray-100);line-height:1.6">${s.notes}</div></div>`:''}
+      ${s.notes?`<div style="background:var(--navy-700);border-radius:8px;padding:14px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--gray-500);margin-bottom:6px">📝 Notes</div><div style="font-size:13px;color:var(--gray-100);line-height:1.6">${esc(s.notes)}</div></div>`:''}
       <div style="background:var(--navy-700);border-radius:8px;padding:14px">
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--gray-500);margin-bottom:8px">🕓 History</div>
-        <div style="font-size:12px;color:var(--gray-300)">Created by <strong style="color:var(--gray-100)">${s.createdBy||'—'}</strong>${s.createdAt?' on '+formatDate(s.createdAt):''}</div>
-        ${s.editedBy?`<div style="font-size:12px;color:var(--gray-300);margin-top:4px">Last edited by <strong style="color:var(--gray-100)">${s.editedBy}</strong>${s.editedAt?' on '+formatDate(s.editedAt):''}</div>`:''}
+        <div style="font-size:12px;color:var(--gray-300)">Created by <strong style="color:var(--gray-100)">${esc(s.createdBy||'—')}</strong>${s.createdAt?' on '+formatDate(s.createdAt):''}</div>
+        ${s.editedBy?`<div style="font-size:12px;color:var(--gray-300);margin-top:4px">Last edited by <strong style="color:var(--gray-100)">${esc(s.editedBy)}</strong>${s.editedAt?' on '+formatDate(s.editedAt):''}</div>`:''}
         ${(currentUser.role==='admin'||currentUser.role==='staff')&&s.statusLog&&s.statusLog.length?`
         <div style="margin-top:12px;border-top:1px solid rgba(255,255,255,.06);padding-top:12px">
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--gray-500);margin-bottom:8px">🔄 Status Changes by Trainer</div>
           ${s.statusLog.map(log=>{
-            const roleColorMap={admin:'var(--orange)',staff:'#aab5ff',trainer:'var(--green)'};
+            const roleColorMap={admin:'var(--orange)',staff:'#d7ddd8',trainer:'var(--green)'};
             const clr=roleColorMap[log.byRole]||'var(--gray-300)';
-            const fromClr=log.from==='Completed'?'#34d399':log.from==='Cancelled'?'#f87171':'#fbbf24';
-            const toClr=log.to==='Completed'?'#34d399':log.to==='Cancelled'?'#f87171':'#fbbf24';
+            const fromClr=log.from==='Completed'?'#7ffa88':log.from==='Cancelled'?'#ef4444':'#fbbf24';
+            const toClr=log.to==='Completed'?'#7ffa88':log.to==='Cancelled'?'#ef4444':'#fbbf24';
             const timeStr=log.at?new Date(log.at).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'}):'—';
             return`<div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:8px;background:rgba(255,255,255,.03);border-radius:6px;padding:8px 10px">
               <div style="flex:1">
-                <div style="font-size:12px;color:var(--gray-100);font-weight:600">${log.by||'—'} <span style="font-size:9px;font-weight:800;padding:1px 6px;border-radius:4px;background:rgba(255,255,255,.07);color:${clr};margin-left:2px;text-transform:uppercase">${log.byRole||''}</span></div>
+                <div style="font-size:12px;color:var(--gray-100);font-weight:600">${esc(log.by||'—')} <span style="font-size:9px;font-weight:800;padding:1px 6px;border-radius:4px;background:rgba(255,255,255,.07);color:${clr};margin-left:2px;text-transform:uppercase">${esc(log.byRole||'')}</span></div>
                 <div style="font-size:11px;color:var(--gray-500);margin-top:2px">${timeStr}</div>
               </div>
               <div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700">
@@ -1664,7 +2818,7 @@ function viewSession(id){
   const foot=document.getElementById('sessionInfoFoot');
   if(isMySession&&s.status==='Scheduled'){
     foot.innerHTML=`<button class="btn-secondary" onclick="closeModal('sessionInfoModal')">Close</button>
-      <button class="btn-primary" style="background:#34d399;border-color:#34d399" onclick="closeModal('sessionInfoModal');confirmCompleteSession('${id}')">✓ Mark as Done</button>
+      <button class="btn-primary" style="background:#7ffa88;border-color:#7ffa88" onclick="closeModal('sessionInfoModal');confirmCompleteSession('${id}')">✓ Mark as Done</button>
       <button class="btn-danger" onclick="closeModal('sessionInfoModal');confirmCancelSession('${id}')">✕ Cancel Session</button>`;
   } else {
     foot.innerHTML=`<button class="btn-secondary" onclick="closeModal('sessionInfoModal')">Close</button>`;
@@ -1681,7 +2835,7 @@ function renderWeekView(){
   const mon=getMondayOf(today());
   const days=[];for(let i=0;i<7;i++)days.push(addDays(mon,i));
   const times=[];for(let h=6;h<=21;h++)times.push(`${h.toString().padStart(2,'0')}:00`);
-  const colors={'u3':'#7285ff','u2':'#60a5fa'};function getColor(tid){return colors[tid]||'#34d399';}
+  const colors={'u3':'#b3bcb5','u2':'#b3bcb5'};function getColor(tid){return colors[tid]||'#7ffa88';}
   const dayHeaders=days.map(d=>{const dd=new Date(d);return`<div class="wh-cell">${dd.toLocaleString('en-US',{weekday:'short'})}<br><span style="font-size:13px;font-weight:700;color:${d===today()?'var(--orange)':'inherit'}">${dd.getDate()}</span></div>`;}).join('');
   const timeSlots=times.map(t=>`<div class="time-slot">${t}</div>`).join('');
   const dayCols=days.map(d=>{
@@ -1697,22 +2851,22 @@ function renderWeekView(){
       const clickAttr=isMyBlock?`onclick="viewSession('${s.id}')"`:(!isOtherTrainer?`onclick="viewSession('${s.id}')"`:'' );
       const blockCursor=isOtherTrainer?'default':(currentUser.role==='trainer'?'pointer':'pointer');
       const blockOpacity=isOtherTrainer?'0.45':'1';
-      const statusColor=s.status==='Completed'?'#34d399':s.status==='Cancelled'?'#f87171':'#fbbf24';
+      const statusColor=s.status==='Completed'?'#7ffa88':s.status==='Cancelled'?'#ef4444':'#fbbf24';
       const statusIcon=s.status==='Completed'?'✓ Done':s.status==='Cancelled'?'✕ Cancelled':'● Scheduled';
-      const statusBg=s.status==='Completed'?'rgba(52,211,153,0.15)':s.status==='Cancelled'?'rgba(248,113,113,0.15)':'rgba(251,191,36,0.12)';
-      const borderClr=s.status==='Completed'?'#34d399':s.status==='Cancelled'?'#f87171':clr;
-      const blockBg=s.status==='Completed'?'rgba(52,211,153,0.08)':s.status==='Cancelled'?'rgba(248,113,113,0.08)':`${clr}20`;
+      const statusBg=s.status==='Completed'?'rgba(127,250,136,0.15)':s.status==='Cancelled'?'rgba(239,68,68,0.15)':'rgba(251,191,36,0.12)';
+      const borderClr=s.status==='Completed'?'#7ffa88':s.status==='Cancelled'?'#ef4444':clr;
+      const blockBg=s.status==='Completed'?'rgba(127,250,136,0.08)':s.status==='Cancelled'?'rgba(239,68,68,0.08)':`${clr}20`;
       const myTag=isMyBlock?`<div style="font-size:7px;font-weight:900;color:var(--green);letter-spacing:.5px;text-transform:uppercase;margin-bottom:1px">● MINE</div>`:'';
       return`<div class="session-block" style="top:${top}px;height:${Math.max(height,48)}px;background:${blockBg};border-left:3px solid ${borderClr};position:absolute;left:2px;right:2px;border-radius:4px;padding:4px 6px;overflow:hidden;cursor:${blockCursor};opacity:${blockOpacity}" ${clickAttr}>
         ${myTag}
         <div style="font-size:10px;font-weight:700;color:${clr}">${s.start}</div>
-        <div style="font-size:10px;font-weight:600;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:#fff">${s.memberName||''}</div>
-        <div style="font-size:9px;color:var(--gray-500)">${s.trainerName||''} · ${s.type||''}</div>
+        <div style="font-size:10px;font-weight:600;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:#fff">${esc(s.memberName||'')}</div>
+        <div style="font-size:9px;color:var(--gray-500)">${esc(s.trainerName||'')} · ${esc(s.type||'')}</div>
         <div style="margin-top:3px;display:inline-flex;align-items:center;gap:3px;background:${statusBg};border:1px solid ${statusColor}33;border-radius:3px;padding:1px 5px">
           <span style="font-size:8px;font-weight:800;color:${statusColor};letter-spacing:.5px;text-transform:uppercase">${statusIcon}</span>
         </div>
       </div>`;}).join('');
-    return`<div class="day-col" style="${d===today()?'background:rgba(114,133,255,.03)':''}">${blocks}</div>`;}).join('');
+    return`<div class="day-col" style="${d===today()?'background:rgba(179,188,181,.03)':''}">${blocks}</div>`;}).join('');
   document.getElementById('schedContent').innerHTML=`
   <div class="week-grid">
     <div class="week-header"><div class="wh-cell">Time</div>${dayHeaders}</div>
@@ -1723,43 +2877,43 @@ function renderListView(){
   let sessions=getSchedSessions().sort((a,b)=>a.date.localeCompare(b.date)||a.start.localeCompare(b.start));
   if(schedMemberSearch){const s=schedMemberSearch.toLowerCase();sessions=sessions.filter(x=>(x.memberName||'').toLowerCase().includes(s));}
   const allUsers=Users.all();
-  const roleColorMap={admin:'var(--orange)',staff:'#aab5ff',trainer:'var(--green)'};
+  const roleColorMap={admin:'var(--orange)',staff:'#d7ddd8',trainer:'var(--green)'};
   const rows=sessions.length?sessions.map(s=>{
     const statusCls={'Scheduled':'badge-scheduled','Completed':'badge-completed','Cancelled':'badge-cancelled'}[s.status]||'';
     const createdByUser=s.createdBy?allUsers.find(u=>u.name===s.createdBy||u.username===s.createdByUsername):null;
     const roleColor=createdByUser?roleColorMap[createdByUser.role]||'var(--gray-300)':'var(--gray-300)';
     const roleTag=createdByUser?`<span style="font-size:9px;font-weight:800;padding:2px 6px;border-radius:4px;background:rgba(255,255,255,.07);color:${roleColor};margin-left:4px;text-transform:uppercase">${createdByUser.role}</span>`:'';
-    const createdLine=s.createdBy?`<div style="font-size:12px;font-weight:600;color:var(--gray-100)">${s.createdBy}${roleTag}</div>`:`<span style="font-size:11px;color:var(--gray-500)">—</span>`;
+    const createdLine=s.createdBy?`<div style="font-size:12px;font-weight:600;color:var(--gray-100)">${esc(s.createdBy)}${roleTag}</div>`:`<span style="font-size:11px;color:var(--gray-500)">—</span>`;
     const editedByUser=s.editedBy?allUsers.find(u=>u.name===s.editedBy||u.username===s.editedByUsername):null;
     const editedRoleColor=editedByUser?roleColorMap[editedByUser.role]||'var(--gray-300)':'var(--gray-300)';
     const editedRoleTag=editedByUser?`<span style="font-size:9px;font-weight:800;padding:2px 5px;border-radius:4px;background:rgba(255,255,255,.07);color:${editedRoleColor};margin-left:4px;text-transform:uppercase">${editedByUser.role}</span>`:'';
-    const editedLine=s.editedBy?`<div style="font-size:11px;color:var(--gray-500);margin-top:3px">✎ ${s.editedBy}${editedRoleTag}</div>`:'';
+    const editedLine=s.editedBy?`<div style="font-size:11px;color:var(--gray-500);margin-top:3px">✎ ${esc(s.editedBy)}${editedRoleTag}</div>`:'';
     const createdByDisplay=`<div>${createdLine}${editedLine}</div>`;
     const isMySession=currentUser.role==='trainer'&&s.trainerId===currentUser.id;
-    const rowHighlight=isMySession?'background:rgba(52,211,153,.04);':'';
-    const myBadge=isMySession?`<span style="font-size:9px;font-weight:800;padding:1px 6px;border-radius:4px;background:rgba(52,211,153,.15);color:var(--green);border:1px solid rgba(52,211,153,.25);margin-left:6px">MY SESSION</span>`:'';
+    const rowHighlight=isMySession?'background:rgba(127,250,136,.04);':'';
+    const myBadge=isMySession?`<span style="font-size:9px;font-weight:800;padding:1px 6px;border-radius:4px;background:rgba(127,250,136,.15);color:var(--green);border:1px solid rgba(127,250,136,.25);margin-left:6px">MY SESSION</span>`:'';
     return`<tr style="${rowHighlight}">
-      <td>${formatDate(s.date)}</td><td>${s.start}–${s.end}</td>
-      <td>${s.trainerName||'—'}${myBadge}</td><td>${s.memberName||'—'}</td>
-      <td>${s.type}</td>
-      <td><span class="badge ${statusCls}">${s.status}</span></td>
+      <td>${formatDate(s.date)}</td><td>${esc(s.start)}–${esc(s.end)}</td>
+      <td>${esc(s.trainerName||'—')}${myBadge}</td><td>${esc(s.memberName||'—')}</td>
+      <td>${esc(s.type)}</td>
+      <td><span class="badge ${statusCls}">${esc(s.status)}</span></td>
       <td>${createdByDisplay}</td>
       <td><div class="td-actions">
         ${currentUser.role==='trainer'
           ?(s.trainerId===currentUser.id
             ?(s.status==='Scheduled'
-              ?`<button onclick="confirmCompleteSession('${s.id}')" title="Mark as Completed" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;font-size:11px;font-weight:800;border-radius:6px;border:1px solid rgba(52,211,153,.35);background:rgba(52,211,153,.12);color:#34d399;cursor:pointer;transition:.2s" onmouseover="this.style.background='#34d399';this.style.color='#000'" onmouseout="this.style.background='rgba(52,211,153,.12)';this.style.color='#34d399'">✓ Complete</button>
-               <button onclick="confirmCancelSession('${s.id}')" title="Cancel Session" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;font-size:11px;font-weight:800;border-radius:6px;border:1px solid rgba(248,113,113,.3);background:rgba(248,113,113,.1);color:var(--red);cursor:pointer;transition:.2s" onmouseover="this.style.background='var(--red)';this.style.color='#fff'" onmouseout="this.style.background='rgba(248,113,113,.1)';this.style.color='var(--red)'">✕ Cancel</button>`
+              ?`<button onclick="confirmCompleteSession('${s.id}')" title="Mark as Completed" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;font-size:11px;font-weight:800;border-radius:6px;border:1px solid rgba(127,250,136,.35);background:rgba(127,250,136,.12);color:#7ffa88;cursor:pointer;transition:.2s" onmouseover="this.style.background='#7ffa88';this.style.color='#000'" onmouseout="this.style.background='rgba(127,250,136,.12)';this.style.color='#7ffa88'">✓ Complete</button>
+               <button onclick="confirmCancelSession('${s.id}')" title="Cancel Session" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;font-size:11px;font-weight:800;border-radius:6px;border:1px solid rgba(239,68,68,.3);background:rgba(239,68,68,.1);color:var(--red);cursor:pointer;transition:.2s" onmouseover="this.style.background='var(--red)';this.style.color='#fff'" onmouseout="this.style.background='rgba(239,68,68,.1)';this.style.color='var(--red)'">✕ Cancel</button>`
               :`<span style="font-size:11px;font-weight:700;padding:3px 8px;border-radius:5px;background:rgba(255,255,255,.05);color:var(--gray-500)">${s.status==='Completed'?'✓ Done':'✕ Cancelled'}</span>`)
             :`<span style="font-size:11px;color:var(--gray-500)" title="View only">👁</span>`)
           :(currentUser.role==='admin'
-            ?`<button class="btn-icon" onclick="editSession('${s.id}')" title="Edit">✏️</button><button class="btn-icon" title="Delete" style="color:var(--red);border-color:rgba(248,113,113,.25);background:rgba(248,113,113,.08)" onmouseover="this.style.background='var(--red)';this.style.color='#fff'" onmouseout="this.style.background='rgba(248,113,113,.08)';this.style.color='var(--red)'" onclick="deleteSession('${s.id}')">✕</button>`
-            :`<button class="btn-icon" onclick="editSession('${s.id}')" title="Edit">✏️</button><button class="btn-icon" title="Delete" style="color:var(--red);border-color:rgba(248,113,113,.25);background:rgba(248,113,113,.08)" onmouseover="this.style.background='var(--red)';this.style.color='#fff'" onmouseout="this.style.background='rgba(248,113,113,.08)';this.style.color='var(--red)'" onclick="deleteSession('${s.id}')">✕</button>`)}
+            ?`<button class="btn-icon" onclick="editSession('${s.id}')" title="Edit">✏️</button><button class="btn-icon" title="Delete" style="color:var(--red);border-color:rgba(239,68,68,.25);background:rgba(239,68,68,.08)" onmouseover="this.style.background='var(--red)';this.style.color='#fff'" onmouseout="this.style.background='rgba(239,68,68,.08)';this.style.color='var(--red)'" onclick="deleteSession('${s.id}')">✕</button>`
+            :`<button class="btn-icon" onclick="editSession('${s.id}')" title="Edit">✏️</button><button class="btn-icon" title="Delete" style="color:var(--red);border-color:rgba(239,68,68,.25);background:rgba(239,68,68,.08)" onmouseover="this.style.background='var(--red)';this.style.color='#fff'" onmouseout="this.style.background='rgba(239,68,68,.08)';this.style.color='var(--red)'" onclick="deleteSession('${s.id}')">✕</button>`)}
       </div></td>
     </tr>`;}).join(''):`<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">📅</div><p>No sessions found</p></div></td></tr>`;
   document.getElementById('schedContent').innerHTML=`
   <div class="table-card">
-    <div class="table-header"><h3>${schedTrainerFilter==='all'?'All Sessions':schedTrainerFilter===currentUser.id?'My Sessions':sessions.length&&sessions[0].trainerName?sessions[0].trainerName+"'s Sessions":'Sessions'}</h3></div>
+    <div class="table-header"><h3>${esc(schedTrainerFilter==='all'?'All Sessions':schedTrainerFilter===currentUser.id?'My Sessions':sessions.length&&sessions[0].trainerName?sessions[0].trainerName+"'s Sessions":'Sessions')}</h3></div>
     <div style="overflow-x:auto"><table><thead><tr><th>Date</th><th>Time</th><th>Trainer</th><th>Member</th><th>Type</th><th>Status</th><th>Created / Edited By</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>
   </div>`;
 }
@@ -1767,14 +2921,14 @@ function confirmCompleteSession(id){
   const s=Sessions.one(id);
   if(!s)return;
   if(currentUser.role==='trainer'&&s.trainerId!==currentUser.id){toast('You can only update your own sessions.','error');return;}
-  const detail=`<div style="margin-top:12px;background:rgba(52,211,153,.06);border:1px solid rgba(52,211,153,.2);border-radius:8px;padding:12px 14px;font-size:12px;line-height:1.9">
-    <div><span style="color:var(--gray-500);width:80px;display:inline-block">Member:</span> <strong style="color:var(--white)">${s.memberName||'—'}</strong></div>
-    <div><span style="color:var(--gray-500);width:80px;display:inline-block">Type:</span> <strong style="color:var(--white)">${s.type||'—'}</strong></div>
+  const detail=`<div style="margin-top:12px;background:rgba(127,250,136,.06);border:1px solid rgba(127,250,136,.2);border-radius:8px;padding:12px 14px;font-size:12px;line-height:1.9">
+    <div><span style="color:var(--gray-500);width:80px;display:inline-block">Member:</span> <strong style="color:var(--white)">${esc(s.memberName||'—')}</strong></div>
+    <div><span style="color:var(--gray-500);width:80px;display:inline-block">Type:</span> <strong style="color:var(--white)">${esc(s.type||'—')}</strong></div>
     <div><span style="color:var(--gray-500);width:80px;display:inline-block">Date:</span> <strong style="color:var(--white)">${formatDate(s.date)}</strong></div>
-    <div><span style="color:var(--gray-500);width:80px;display:inline-block">Time:</span> <strong style="color:var(--white)">${s.start} – ${s.end}</strong></div>
+    <div><span style="color:var(--gray-500);width:80px;display:inline-block">Time:</span> <strong style="color:var(--white)">${esc(s.start)} – ${esc(s.end)}</strong></div>
   </div>`;
   openConfirm('✓ Mark Session as Completed',
-    `Are you sure you want to mark this session as <strong style="color:#34d399">Completed</strong>?${detail}`,
+    `Are you sure you want to mark this session as <strong style="color:#7ffa88">Completed</strong>?${detail}`,
     ()=>{ markSessionDone(id); },
     'Mark as Completed','btn-primary');
 }
@@ -1783,14 +2937,14 @@ function confirmCancelSession(id){
   const s=Sessions.one(id);
   if(!s)return;
   if(currentUser.role==='trainer'&&s.trainerId!==currentUser.id){toast('You can only update your own sessions.','error');return;}
-  const detail=`<div style="margin-top:12px;background:rgba(248,113,113,.06);border:1px solid rgba(248,113,113,.2);border-radius:8px;padding:12px 14px;font-size:12px;line-height:1.9">
-    <div><span style="color:var(--gray-500);width:80px;display:inline-block">Member:</span> <strong style="color:var(--white)">${s.memberName||'—'}</strong></div>
-    <div><span style="color:var(--gray-500);width:80px;display:inline-block">Type:</span> <strong style="color:var(--white)">${s.type||'—'}</strong></div>
+  const detail=`<div style="margin-top:12px;background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.2);border-radius:8px;padding:12px 14px;font-size:12px;line-height:1.9">
+    <div><span style="color:var(--gray-500);width:80px;display:inline-block">Member:</span> <strong style="color:var(--white)">${esc(s.memberName||'—')}</strong></div>
+    <div><span style="color:var(--gray-500);width:80px;display:inline-block">Type:</span> <strong style="color:var(--white)">${esc(s.type||'—')}</strong></div>
     <div><span style="color:var(--gray-500);width:80px;display:inline-block">Date:</span> <strong style="color:var(--white)">${formatDate(s.date)}</strong></div>
-    <div><span style="color:var(--gray-500);width:80px;display:inline-block">Time:</span> <strong style="color:var(--white)">${s.start} – ${s.end}</strong></div>
+    <div><span style="color:var(--gray-500);width:80px;display:inline-block">Time:</span> <strong style="color:var(--white)">${esc(s.start)} – ${esc(s.end)}</strong></div>
   </div>`;
   openConfirm('✕ Cancel Session',
-    `Are you sure you want to <strong style="color:#f87171">Cancel</strong> this session?${detail}`,
+    `Are you sure you want to <strong style="color:#ef4444">Cancel</strong> this session?${detail}`,
     ()=>{
       const sessions=Sessions.all();
       const idx=sessions.findIndex(x=>x.id===id);
@@ -1841,12 +2995,12 @@ function filterSessionTrainer(val){
   if(!matches.length){list.innerHTML='<div style="padding:10px 14px;color:var(--gray-500);font-size:13px">No trainers found</div>';list.style.display='block';return;}
   list.innerHTML='';
   matches.forEach(function(u){
-    const specs=Array.isArray(u.specializations)&&u.specializations.length?u.specializations.slice(0,2).join(', ')+(u.specializations.length>2?' +more':''):'';
+    const specs=Array.isArray(u.specializations)&&u.specializations.length?u.specializations.slice(0,2).map(esc).join(', ')+(u.specializations.length>2?' +more':''):'';
     const div=document.createElement('div');
     div.style.cssText='padding:9px 12px;font-size:13px;border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer;display:flex;flex-direction:column;gap:2px';
-    div.innerHTML=`<span style="font-weight:600;color:var(--white)">${u.name}${u.coachName&&u.coachName!==u.name?' <span style="font-size:11px;color:var(--gray-500)">(${u.coachName})</span>':''}</span>${specs?`<span style="font-size:10px;color:var(--orange)">${specs}</span>`:''}`;
+    div.innerHTML=`<span style="font-weight:600;color:var(--white)">${esc(u.name)}${u.coachName&&u.coachName!==u.name?' <span style="font-size:11px;color:var(--gray-500)">(${esc(u.coachName)})</span>':''}</span>${specs?`<span style="font-size:10px;color:var(--orange)">${specs}</span>`:''}`;
     div.addEventListener('mousedown',function(){selectSessTrainer(u.id,u.coachName||u.name);});
-    div.addEventListener('mouseover',function(){this.style.background='rgba(114,133,255,.1)';});
+    div.addEventListener('mouseover',function(){this.style.background='rgba(179,188,181,.1)';});
     div.addEventListener('mouseout',function(){this.style.background='';});
     list.appendChild(div);
   });
@@ -1923,10 +3077,10 @@ function filterSessionMember(val){
     const isExpired=m.status==='Expired';
     const div=document.createElement('div');
     div.style.cssText='padding:8px 12px;font-size:13px;border-bottom:1px solid rgba(255,255,255,.05);display:flex;align-items:center;justify-content:space-between;'+(isExpired?'cursor:not-allowed;opacity:0.5;':'cursor:pointer;');
-    div.innerHTML=m.name+(isExpired?'<span style="font-size:10px;font-weight:800;color:#f87171;background:rgba(248,113,113,.12);padding:2px 7px;border-radius:4px;letter-spacing:.5px;margin-left:8px;">EXPIRED</span>':'');
+    div.innerHTML=esc(m.name)+(isExpired?'<span style="font-size:10px;font-weight:800;color:#ef4444;background:rgba(239,68,68,.12);padding:2px 7px;border-radius:4px;letter-spacing:.5px;margin-left:8px;">EXPIRED</span>':'');
     if(!isExpired){
       div.addEventListener('mousedown',function(){selectSessMember(m.id,m.name);});
-      div.addEventListener('mouseover',function(){this.style.background='rgba(114,133,255,.1)';});
+      div.addEventListener('mouseover',function(){this.style.background='rgba(179,188,181,.1)';});
       div.addEventListener('mouseout',function(){this.style.background='';});
     }
     list.appendChild(div);
@@ -1961,7 +3115,7 @@ function saveSession(){
   if(sessions.filter(s=>s.trainerId===trainerId&&s.date===date&&s.status!=='Cancelled').length>=8){err.textContent='Trainer not available for the selected day.';err.style.display='block';return;}
   const trainer=Users.all().find(u=>u.id===trainerId);
   const member=Members.one(memberId);
-  const data={trainerId,trainerName:trainer?trainer.name:'Unknown',memberId,memberName:member?member.name:'Unknown',type,date,start,end,notes:document.getElementById('sf_notes').value.trim(),status:'Scheduled'};
+  const data={trainerId,trainerName:trainer?trainer.name:'Unknown',memberId,memberName:member?member.name:'Unknown',type,date,start,end,notes:sanitizeText(document.getElementById('sf_notes').value.trim()),status:'Scheduled'};
   if(editingSessionId){
     const idx=sessions.findIndex(s=>s.id===editingSessionId);
     if(idx>-1)sessions[idx]={...sessions[idx],...data,editedBy:currentUser.name,editedByUsername:currentUser.username,editedByRole:currentUser.role,editedAt:today()};
@@ -1989,11 +3143,11 @@ function toggleSessionStatus(id){
 function deleteSession(id){
   const s=Sessions.all().find(x=>x.id===id);
   const detail=s?`<div style="margin-top:10px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:12px 14px;font-size:12px;line-height:1.8">
-    <div><span style="color:var(--gray-500);width:80px;display:inline-block">Member:</span> <strong style="color:var(--white)">${s.memberName||'—'}</strong></div>
-    <div><span style="color:var(--gray-500);width:80px;display:inline-block">Trainer:</span> <strong style="color:var(--white)">${s.trainerName||'—'}</strong></div>
+    <div><span style="color:var(--gray-500);width:80px;display:inline-block">Member:</span> <strong style="color:var(--white)">${esc(s.memberName||'—')}</strong></div>
+    <div><span style="color:var(--gray-500);width:80px;display:inline-block">Trainer:</span> <strong style="color:var(--white)">${esc(s.trainerName||'—')}</strong></div>
     <div><span style="color:var(--gray-500);width:80px;display:inline-block">Date:</span> <strong style="color:var(--white)">${formatDate(s.date)}</strong></div>
-    <div><span style="color:var(--gray-500);width:80px;display:inline-block">Time:</span> <strong style="color:var(--white)">${s.start}–${s.end}</strong></div>
-    <div><span style="color:var(--gray-500);width:80px;display:inline-block">Type:</span> <strong style="color:var(--white)">${s.type||'—'}</strong></div>
+    <div><span style="color:var(--gray-500);width:80px;display:inline-block">Time:</span> <strong style="color:var(--white)">${esc(s.start)}–${esc(s.end)}</strong></div>
+    <div><span style="color:var(--gray-500);width:80px;display:inline-block">Type:</span> <strong style="color:var(--white)">${esc(s.type||'—')}</strong></div>
   </div>`:'';
   openConfirm('Delete Session',`Are you sure you want to delete this session? This cannot be undone.${detail}`,()=>{
     const dS=Sessions.all().find(x=>x.id===id);if(dS)logActivity('Deleted','Session',(dS.memberName||'?')+' with '+(dS.trainerName||'?'),'Date: '+dS.date+' | '+dS.start+'–'+dS.end+' | Type: '+(dS.type||'?'));const sessions=Sessions.all().filter(x=>x.id!==id);Sessions.save(sessions);toast('Session deleted.');renderSchedule();
@@ -2005,6 +3159,7 @@ function deleteSession(id){
 // ======================================================================
 let dismissedNotifs=false;
 let _dismissedIds=new Set();
+let _notifFilter='All';
 function dismissRenewal(memberId){
   _dismissedIds.add(memberId);
   renderNotifications();
@@ -2014,58 +3169,646 @@ function dismissAllRenewals(){
   const allExpiring=Members.all().filter(m=>{
     if(m.status==='Archived')return false;
     const d=daysUntil(m.expiryDate);
-    return d<=3;
+    return d<=7;
   });
-  allExpiring.forEach(m=>_dismissedIds.add(m.id));
-  renderNotifications();
-  scanRenewals();
+  const pending=allExpiring.filter(m=>!_dismissedIds.has(m.id));
+  if(!pending.length){toast('No renewal reminders to dismiss.','error');return;}
+  openConfirm('Dismiss All Renewal Reminders',
+    `Dismiss all <strong>${pending.length}</strong> renewal reminder${pending.length!==1?'s':''}?<br><span style="font-size:12px;color:var(--gray-500)">This hides expired, urgent and upcoming reminders for now — they will reappear after the page reloads.</span>`,
+    ()=>{pending.forEach(m=>_dismissedIds.add(m.id));renderNotifications();scanRenewals();},
+    'Dismiss All');
+}
+function confirmRenew(memberId){
+  const m=Members.one(memberId);
+  if(!m)return;
+  const pl=m.planId?Plans.one(m.planId):null;
+  const price=pl?Number(pl.price):0;
+  openConfirm('🔄 Renew Membership',
+    `Renew <strong>${esc(m.name)}</strong>'s <strong>${esc(pl?pl.name:'—')}</strong> plan for <strong>₱${price.toLocaleString()}</strong>?<br><span style="font-size:12px;color:var(--gray-500)">You'll confirm the payment details next.</span>`,
+    ()=>{openPaymentForMember(memberId);},
+    'Continue','btn-primary');
 }
 function renderNotifications(){
   const el=document.getElementById('panelNotifications');
   const allExpiring=Members.all().filter(m=>{
     if(m.status==='Archived')return false;
     const d=daysUntil(m.expiryDate);
-    return d<=3;
+    return d<=7;
   });
   const members=allExpiring.filter(m=>!_dismissedIds.has(m.id));
-  if(dismissedNotifs||!members.length){
-    el.innerHTML=`<div class="table-card"><div class="table-header"><h3>🔄 Member Renewals <span class="badge badge-active" style="margin-left:8px">0</span></h3></div>
-    <div style="padding:40px;text-align:center;color:var(--green)"><div style="font-size:40px">✅</div><p style="margin-top:12px">All members have been attended to.</p></div></div>`;
-    return;
-  }
   const plans=Plans.all();
-  const expired_count=members.filter(m=>daysUntil(m.expiryDate)<0).length;
-  const urgent_count=members.filter(m=>{const d=daysUntil(m.expiryDate);return d>=0&&d<=1;}).length;
-  const items=members.map(m=>{
+  const bucketOf=m=>{const d=daysUntil(m.expiryDate);return d<0?'expired':(d<=2?'urgent':'upcoming');};
+  const buckets={expired:[],urgent:[],upcoming:[]};
+  members.forEach(m=>buckets[bucketOf(m)].push(m));
+  ['expired','urgent','upcoming'].forEach(k=>buckets[k].sort((a,b)=>daysUntil(a.expiryDate)-daysUntil(b.expiryDate)));
+  const visible=_notifFilter==='All'?[...buckets.expired,...buckets.urgent,...buckets.upcoming]:(buckets[_notifFilter]||[]);
+  const now=new Date();
+  const monthPays=Payments.all().filter(p=>{const d=new Date(p.date);return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();});
+  const monthRev=monthPays.reduce((a,p)=>a+Number(p.amount),0);
+  const items=visible.map(m=>{
     const d=daysUntil(m.expiryDate);const pl=plans.find(p=>p.id===m.planId);
-    const expired=d<0;const urgent=d<=1&&!expired;
-    const avatarColor=expired?'var(--red)':urgent?'var(--red)':'var(--gold)';
-    const dayLabel=expired?`Expired ${Math.abs(d)} day${Math.abs(d)!==1?'s':''} ago`:`${d} day${d!==1?'s':''} left`;
-    const badgeCls=expired?'badge-expired':urgent?'badge-expired':'badge-expiring';
-    return`<div class="notif-item ${expired||urgent?'urgent':'warning'}">
-      <div class="notif-item-top">
-        <div class="user-avatar" style="width:42px;height:42px;font-size:14px;background:${avatarColor};flex-shrink:0">${initials(m.name)}</div>
-        <div class="notif-info">
-          <div class="notif-name">${m.name}</div>
-          <div class="notif-detail">${pl?pl.name:'—'}</div>
-          <div class="notif-detail" style="margin-top:2px">Expiry: ${formatDate(m.expiryDate)}</div>
+    const bucket=bucketOf(m);
+    const avatarColor=bucket==='expired'?'#991b1b':bucket==='urgent'?'var(--orange)':'var(--gold)';
+    const dayLabel=bucket==='expired'?`Expired ${Math.abs(d)} day${Math.abs(d)!==1?'s':''} ago`:`${d} day${d!==1?'s':''} left`;
+    const badgeCls=bucket==='expired'?'badge-expired':bucket==='urgent'?'badge-urgent':'badge-expiring';
+    const cls=bucket==='expired'?'expired':bucket==='urgent'?'urgent':'warning';
+    const dayColor=d<0?'var(--red)':d<=2?'var(--orange)':'var(--gold)';
+    return`<div class="notif-item ${cls}" style="display:flex;align-items:center;gap:12px;transition:.15s" onmouseover="this.style.background='rgba(255,255,255,.035)'" onmouseout="this.style.background=''">
+      <div class="user-avatar" style="width:36px;height:36px;font-size:12px;background:${avatarColor};flex-shrink:0">${esc(initials(m.name))}</div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <span class="notif-name">${esc(m.name)}</span>
+          <span class="badge ${badgeCls}" style="font-size:8px">${esc(pl?pl.name:'—')}</span>
         </div>
-        <button title="Dismiss" onclick="dismissRenewal('${m.id}')" style="flex-shrink:0;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.25);color:var(--red);width:28px;height:28px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:700;transition:.15s" onmouseover="this.style.background='var(--red)';this.style.color='#fff'" onmouseout="this.style.background='rgba(248,113,113,.08)';this.style.color='var(--red)'">✕</button>
+        <div style="font-size:11px;color:var(--gray-500);margin-top:2px">Expires ${formatDate(m.expiryDate)} <span style="color:${dayColor};font-weight:700">· ${dayLabel}</span></div>
       </div>
-      <div class="notif-item-bottom">
-        <span class="badge ${badgeCls}">${dayLabel}</span>
-        <button class="btn-primary btn-sm" onclick="openPaymentForMember('${m.id}')" style="font-size:12px;padding:6px 14px">🔄 Renew</button>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+        <button class="btn-primary btn-sm" onclick="confirmRenew('${m.id}')" style="font-size:11px;padding:7px 14px;width:auto">Renew →</button>
+        <button title="Dismiss this reminder for now — it returns after the page reloads" onclick="dismissRenewal('${m.id}')" style="flex-shrink:0;background:transparent;border:1px solid rgba(255,255,255,.1);color:var(--gray-500);width:28px;height:28px;border-radius:7px;cursor:pointer;font-size:12px;font-weight:700;transition:.15s;display:inline-flex;align-items:center;justify-content:center" onmouseover="this.style.background='rgba(239,68,68,.12)';this.style.color='var(--red)';this.style.borderColor='rgba(239,68,68,.35)'" onmouseout="this.style.background='transparent';this.style.color='var(--gray-500)';this.style.borderColor='rgba(255,255,255,.1)'"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       </div>
     </div>`;}).join('');
+  const tab=(label,key,cnt)=>`<button class="filter-chip${_notifFilter===key?' active':''}" onclick="_notifFilter='${key}';renderNotifications()">${label} <span style="opacity:.7">(${cnt})</span></button>`;
   el.innerHTML=`
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
     <div>
       <div class="section-title" style="margin-bottom:4px">Member Renewals <span class="badge badge-expired" style="margin-left:6px">${members.length}</span></div>
-      <div style="font-size:12px;color:var(--gray-500)">${expired_count} expired &nbsp;·&nbsp; ${urgent_count} urgent &nbsp;·&nbsp; ${members.length-expired_count-urgent_count} upcoming</div>
+      <div style="font-size:12px;color:var(--gray-500)">${buckets.expired.length} expired &nbsp;·&nbsp; ${buckets.urgent.length} urgent &nbsp;·&nbsp; ${buckets.upcoming.length} upcoming</div>
     </div>
-    <button class="btn-secondary btn-sm" onclick="dismissAllRenewals()">Dismiss All</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn-primary btn-sm" onclick="showRenewedPage()" style="width:auto">🔄 Recently Renewed</button>
+      <button class="btn-secondary btn-sm" onclick="dismissAllRenewals()">Dismiss All</button>
+    </div>
   </div>
-  <div class="notif-list">${items}</div>`;
+  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
+    ${tab('All','All',members.length)}
+    ${tab('Expired','expired',buckets.expired.length)}
+    ${tab('Urgent','urgent',buckets.urgent.length)}
+    ${tab('Upcoming','upcoming',buckets.upcoming.length)}
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+    <div class="renew-mini-stat">🔄 ${monthPays.length} renewals this month</div>
+    <div class="renew-mini-stat">💰 ₱${monthRev.toLocaleString()} collected</div>
+  </div>
+  ${visible.length?`<div class="notif-list">${items}</div>`:`<div class="table-card"><div class="empty-state"><div class="empty-icon">✅</div><p>${_notifFilter==='All'?'All members have been attended to.':'No members in this category right now.'}</p></div></div>`}`;
+}
+
+// ======================================================================
+// SUB-PAGE: RECENTLY RENEWED (opened from Member Renewals button)
+// ======================================================================
+function showRenewedPage(){
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  const pe=document.getElementById('panelRenewed');
+  if(pe)pe.classList.add('active');
+  document.getElementById('pageTitle').textContent='Recently Renewed';
+  _lastPanel='renewed';
+  renderPanel('renewed');
+}
+function backToRenewals(){
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  const pe=document.getElementById('panelNotifications');
+  if(pe)pe.classList.add('active');
+  document.getElementById('pageTitle').textContent='Member Renewals';
+  _lastPanel='notifications';
+  renderNotifications();
+}
+let _renewedFilter='All';
+function renderRenewed(){
+  const el=document.getElementById('panelRenewed');
+  if(!el)return;
+  const list=Payments.all().slice().reverse();
+  const allExpiring=Members.all().filter(m=>{
+    if(m.status==='Archived')return false;
+    return daysUntil(m.expiryDate)<=7;
+  });
+  const bucketOf=m=>{const d=daysUntil(m.expiryDate);return d<0?'expired':(d<=2?'urgent':'upcoming');};
+  const buckets={expired:[],urgent:[],upcoming:[]};
+  allExpiring.forEach(m=>buckets[bucketOf(m)].push(m));
+  const now=new Date();
+  const monthPays=Payments.all().filter(p=>{const d=new Date(p.date);return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();});
+  const monthRev=monthPays.reduce((a,p)=>a+Number(p.amount),0);
+  const memberBucket={};allExpiring.forEach(m=>memberBucket[m.id]=bucketOf(m));
+  const filtered=_renewedFilter==='All'?list:list.filter(p=>memberBucket[p.memberId]===_renewedFilter);
+  const tab=(label,key,cnt)=>`<button class="filter-chip${_renewedFilter===key?' active':''}" onclick="_renewedFilter='${key}';renderRenewed()">${label} <span style="opacity:.7">(${cnt})</span></button>`;
+  el.innerHTML=`
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+    <div>
+      <div class="section-title" style="margin-bottom:4px">Recently Renewed <span class="badge badge-active" style="margin-left:6px">${list.length}</span></div>
+      <div style="font-size:12px;color:var(--gray-500)">All recorded membership renewals and payments, newest first.</div>
+    </div>
+    <button class="btn-secondary btn-sm" onclick="backToRenewals()">← Back to Member Renewals</button>
+  </div>
+  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
+    ${tab('All','All',allExpiring.length)}
+    ${tab('Expired','expired',buckets.expired.length)}
+    ${tab('Urgent','urgent',buckets.urgent.length)}
+    ${tab('Upcoming','upcoming',buckets.upcoming.length)}
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+    <div class="renew-mini-stat">🔄 ${monthPays.length} renewals this month</div>
+    <div class="renew-mini-stat">💰 ₱${monthRev.toLocaleString()} collected</div>
+  </div>
+  <div class="table-card">
+    <div class="table-header"><h3>Renewal Records</h3></div>
+    ${filtered.length?`<div style="overflow-x:auto"><table><thead><tr><th>Member</th><th>Plan</th><th>Amount</th><th>Date</th></tr></thead><tbody>
+    ${filtered.map(p=>`<tr><td>${esc(p.memberName)}</td><td>${esc(p.planName)}</td><td>₱${Number(p.amount).toLocaleString()}</td><td>${formatDate(p.date)}</td></tr>`).join('')}
+    </tbody></table></div>`:`<div class="empty-state"><div class="empty-icon">🔄</div><p>No renewals in this category right now.</p></div>`}
+  </div>`;
+}
+
+// ======================================================================
+// MEMBER MESSAGES (in-system front desk chat)
+// ======================================================================
+let _msgThreadId=null,_msgStaffMode=false;
+function updateMessageBadge(){
+  const n=Messages.all().filter(m=>m.direction==='in'&&!m.read).length;
+  const b=document.getElementById('msgBadge');
+  if(b){b.style.display=n?'flex':'none';b.textContent=n;}
+}
+function openMemberMessageModal(){
+  const mem=Members.one(currentUser.memberId||currentUser.id);
+  if(!mem)return;
+  _msgThreadId=mem.id;_msgStaffMode=false;
+  document.getElementById('messageModalTitle').textContent='Message the Gym';
+  document.getElementById('msgInput').placeholder='Type your message…';
+  renderMsgThread();
+  openModal('messageModal');
+}
+function openMsgThread(memberId){
+  _msgThreadId=memberId;_msgStaffMode=true;
+  const mem=Members.one(memberId);
+  document.getElementById('messageModalTitle').textContent=mem?'Message — '+mem.name:'Message';
+  document.getElementById('msgInput').placeholder='Reply to '+(mem?mem.name:'member')+'…';
+  const all=Messages.all();
+  let changed=false;
+  all.forEach(m=>{if(m.memberId===memberId&&m.direction==='in'&&!m.read){m.read=true;changed=true;}});
+  if(changed)Messages.save(all);
+  renderMsgThread();updateMessageBadge();
+  openModal('messageModal');
+}
+function renderMsgThread(){
+  const msgs=Messages.all().filter(m=>m.memberId===_msgThreadId).sort((a,b)=>a.ts-b.ts);
+  const body=document.getElementById('messageModalBody');
+  if(!body)return;
+  body.innerHTML=msgs.length?msgs.map(m=>`
+    <div style="display:flex;${m.direction==='in'?'':'justify-content:flex-end'};margin-bottom:10px">
+      <div style="max-width:80%;padding:10px 14px;border-radius:14px;font-size:13px;line-height:1.5;${m.direction==='in'?'background:rgba(255,255,255,.09);color:var(--gray-200);border-bottom-left-radius:3px':'background:linear-gradient(135deg,var(--orange),var(--orange-dark));color:#fff;border-bottom-right-radius:3px'}">
+        <div style="font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1px;opacity:.7;margin-bottom:3px">${m.direction==='in'?'Member':'Front Desk'} · ${formatDate(m.date)} ${esc(m.time||'')}</div>
+        ${esc(m.text)}
+      </div>
+    </div>`).join(''):`<div class="empty-state" style="padding:30px"><div class="empty-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><p>No messages yet</p><p class="empty-sub" style="font-size:12px;color:var(--gray-500)">${_msgStaffMode?'This member has not sent any messages.':'Send a message and the front desk will reply here.'}</p></div>`;
+  body.scrollTop=body.scrollHeight;
+}
+function sendMessage(){
+  const input=document.getElementById('msgInput');
+  const text=(input.value||'').trim();
+  if(!text)return;
+  const mem=Members.one(_msgThreadId);
+  Messages.add({id:'MSG'+uid(),memberId:_msgThreadId,memberName:mem?mem.name:'Member',text,time:new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}),date:today(),ts:Date.now(),direction:_msgStaffMode?'out':'in',read:_msgStaffMode});
+  if(!_msgStaffMode)logActivity('Message','Member',mem?mem.name:'Member',text);
+  input.value='';
+  renderMsgThread();updateMessageBadge();
+  if(_msgStaffMode&&document.getElementById('panelMessages'))renderMessages();
+  toast('Message sent.');
+}
+function renderMessages(){
+  const el=document.getElementById('panelMessages');
+  const all=Messages.all().slice().reverse();
+  const threads=[];
+  all.forEach(m=>{
+    let t=threads.find(x=>x.memberId===m.memberId);
+    if(!t){t={memberId:m.memberId,memberName:m.memberName,unread:0,last:m};threads.push(t);}
+    t.last=m;if(m.direction==='in'&&!m.read)t.unread++;
+  });
+  el.innerHTML=`
+  <div class="table-card">
+    <div class="table-header"><h3>Member Messages <span style="font-size:12px;font-weight:400;color:var(--gray-500);margin-left:6px">${threads.length} conversation(s)</span></h3></div>
+    ${threads.length?threads.map(t=>`<div style="display:flex;align-items:center;gap:12px;padding:13px 18px;border-bottom:1px solid rgba(255,255,255,.06);cursor:pointer;transition:.15s" onmouseover="this.style.background='rgba(255,255,255,.04)'" onmouseout="this.style.background=''" onclick="openMsgThread('${t.memberId}')">
+      <div class="user-avatar" style="width:38px;height:38px;font-size:12px;background:linear-gradient(135deg,var(--orange),var(--orange-dark));flex-shrink:0">${esc(initials(t.memberName))}</div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-weight:800;color:var(--white);font-size:14px">${esc(t.memberName)}</span>
+          ${t.unread?`<span class="nav-badge" style="display:flex;position:static">${t.unread}</span>`:''}
+        </div>
+        <div style="font-size:12px;color:var(--gray-500);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(t.last.text)}</div>
+      </div>
+      <span style="font-size:11px;color:var(--gray-500);flex-shrink:0">${formatDate(t.last.date)} ${esc(t.last.time||'')}</span>
+    </div>`).join(''):`<div class="empty-state"><div class="empty-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><p>No messages yet</p><p class="empty-sub">Member questions from the "Need Help?" section will appear here.</p></div>`}
+  </div>`;
+}
+//
+// Export/Import Messages functions
+//
+function exportMessages(){
+  const msgs=Messages.all();
+  const data=JSON.stringify(msgs);
+  const blob=new Blob([data],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download='messages-backup.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Messages exported.');
+}
+function importMessages(){
+  const input=document.createElement('input');
+  input.type='file';
+  input.accept='application/json';
+  input.onchange=e=>{
+    const file=e.target.files[0];
+    const reader=new FileReader();
+    reader.onload=f=>{
+      try{
+        const msgs=JSON.parse(reader.result);
+        if(msgs&&Array.isArray(msgs)&&msgs.length>0){
+          if(confirm('This will replace all current messages. Continue?')){
+            Messages.save(msgs);
+            renderMessages();
+            toast('Messages imported.');
+          }
+        }else{alert('Invalid messages format.');}
+      }catch(e){alert('Error reading file.');}
+    };
+    reader.readAsDataURL(file);
+  };
+  input.click();
+}
+
+// ======================================================================
+// PANEL: ANNOUNCEMENTS (gym closures, events, anniversaries)
+// ======================================================================
+const ANNOUNCE_META={general:{icon:`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a1 1 0 0 0 1 1h2l3 4V6L6 10H4a1 1 0 0 0-1 1z"/><path d="M14 8a5 5 0 0 1 0 8"/><path d="M17.5 5.5a9 9 0 0 1 0 13"/></svg>`,label:'General',cls:'badge-active'},event:{icon:`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,label:'Event',cls:'badge-expiring'},holiday:{icon:`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`,label:'Holiday / Closed',cls:'badge-expired'},alert:{icon:`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,label:'Alert',cls:'badge-suspended'}};
+function renderAnnouncements(){
+  const el=document.getElementById('panelAnnouncements');
+  const all=Announcements.all().slice().reverse();
+  el.innerHTML=`
+  <div class="page-actions">
+    <div class="table-controls">
+      <span style="font-size:11px;color:var(--gray-500)">Post gym closures, events and anniversaries — members see these on their dashboard</span>
+    </div>
+    <button class="btn-primary" style="display:inline-flex;align-items:center;gap:8px" onclick="openAnnounceModal()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a1 1 0 0 0 1 1h2l3 4V6L6 10H4a1 1 0 0 0-1 1z"/><path d="M14 8a5 5 0 0 1 0 8"/><path d="M17.5 5.5a9 9 0 0 1 0 13"/></svg> Post Announcement</button>
+  </div>
+  <div class="table-card">
+    <div class="table-header"><h3>Announcements <span style="font-size:12px;font-weight:400;color:var(--gray-500);margin-left:6px">${all.length} total</span></h3></div>
+    ${all.length?all.map(a=>{
+      const meta=ANNOUNCE_META[a.type]||ANNOUNCE_META.general;
+      return `<div style="display:flex;align-items:flex-start;gap:14px;padding:16px 18px;border-bottom:1px solid rgba(255,255,255,.06)">
+        <div style="font-size:22px;flex-shrink:0">${meta.icon}</div>
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span style="font-weight:800;color:var(--white);font-size:14px">${esc(a.title)}</span>
+            <span class="badge ${meta.cls}">${meta.label}</span>
+            ${a.date?`<span style="font-size:11px;color:var(--gray-500)">${formatDate(a.date)}</span>`:''}
+          </div>
+          <div style="font-size:12.5px;color:var(--gray-500);margin-top:6px;white-space:pre-wrap">${esc(a.text)}</div>
+          <div style="font-size:11px;color:var(--gray-600);margin-top:8px">Posted by ${esc(a.createdBy||'Admin')} · ${formatDate(a.createdAt)}</div>
+        </div>
+        <button class="btn-icon" style="flex-shrink:0" title="Delete announcement" onclick="deleteAnnouncement('${a.id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+      </div>`;
+    }).join(''):`<div class="empty-state"><div class="empty-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a1 1 0 0 0 1 1h2l3 4V6L6 10H4a1 1 0 0 0-1 1z"/><path d="M14 8a5 5 0 0 1 0 8"/><path d="M17.5 5.5a9 9 0 0 1 0 13"/></svg></div><p>No announcements yet</p><p class="empty-sub">Post a gym closure, event or anniversary — members will see it on their dashboard.</p></div>`}
+  </div>`;
+}
+function openAnnounceModal(){
+  document.getElementById('an_type').value='general';
+  document.getElementById('an_date').value=today();
+  document.getElementById('an_title').value='';
+  document.getElementById('an_text').value='';
+  const err=document.getElementById('announceFormError');
+  if(err){err.textContent='';err.style.display='none';}
+  openModal('announceModal');
+}
+function saveAnnouncement(){
+  const err=document.getElementById('announceFormError');
+  const title=document.getElementById('an_title').value.trim();
+  const text=document.getElementById('an_text').value.trim();
+  if(!title||!text){err.textContent='Please fill in the title and message.';err.style.display='block';return;}
+  Announcements.add({id:nextId(KEY.announcements,'ANN'),type:document.getElementById('an_type').value,date:document.getElementById('an_date').value,title:sanitizeText(title),text:sanitizeText(text),createdBy:currentUser.name||'Admin',createdAt:today(),time:new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})});
+  logActivity('Posted','Announcement','"'+title+'"');
+  closeModal('announceModal');
+  renderAnnouncements();
+  toast('Announcement posted. Members can see it now.');
+}
+function deleteAnnouncement(id){
+  const a=Announcements.one(id);
+  if(!a)return;
+  openConfirm('Delete Announcement','Delete "'+a.title+'"? Members will no longer see it.',function(){
+    Announcements.remove(id);
+    logActivity('Deleted','Announcement','"'+a.title+'"');
+    renderAnnouncements();
+    toast('Announcement deleted.');
+  },'Delete','btn-danger');
+}
+function announceStripHtml(){
+  const all=Announcements.all().slice().reverse().slice(0,4);
+  if(!all.length)return'';
+  return `<div style="display:grid;gap:10px;margin-bottom:16px">${all.map(a=>{
+    const meta=ANNOUNCE_META[a.type]||ANNOUNCE_META.general;
+    return `<div style="display:flex;align-items:flex-start;gap:12px;background:linear-gradient(135deg,rgba(127,250,136,.08),rgba(127,250,136,.02));border:1px solid rgba(127,250,136,.25);border-radius:14px;padding:14px 16px">
+      <div style="font-size:20px;flex-shrink:0">${meta.icon}</div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-weight:800;color:var(--white);font-size:13.5px">${esc(a.title)}</span>
+          <span class="badge ${meta.cls}" style="font-size:9.5px;padding:2px 8px">${meta.label}</span>
+        </div>
+        <div style="font-size:12.5px;color:var(--gray-500);margin-top:4px;white-space:pre-wrap">${esc(a.text)}</div>
+        ${a.date?`<div style="font-size:11px;color:var(--orange);font-weight:600;margin-top:6px">📅 ${formatDate(a.date)}</div>`:''}
+      </div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+// ======================================================================
+// PANEL: PAYMENT QUEUE (pending_payment activation)
+// ======================================================================
+let _confirmPaymentMemberId=null;
+let _queueSearch='',_queuePlanFilter='All';
+const _queueSelected=new Set();
+function renderQueue(){
+  const el=document.getElementById('panelQueue');
+  const plans=Plans.all().filter(p=>p.status==='Active');
+  let pending=Members.all().filter(m=>m.status==='pending_payment');
+  if(_queueSearch){const s=_queueSearch.toLowerCase();pending=pending.filter(m=>m.name.toLowerCase().includes(s)||m.id.toLowerCase().includes(s)||(m.email||'').toLowerCase().includes(s));}
+  if(_queuePlanFilter!=='All')pending=pending.filter(m=>m.planId===_queuePlanFilter);
+  pending.sort((a,b)=>(a.createdAt||'').localeCompare(b.createdAt||''));
+  const total=openPendingNotifs().length;
+  const items=pending.map(m=>{
+    const plan=m.planId?Plans.one(m.planId):null;
+    const ageDays=Math.max(0,Math.floor((Date.now()-new Date(m.createdAt||Date.now()))/86400000));
+    const daysLeft=PENDING_ARCHIVE_DAYS-ageDays;
+    const urgent=daysLeft<=1;
+    const ageColor=ageDays<=2?'var(--green)':(ageDays>=PENDING_ARCHIVE_DAYS-2?'var(--red)':'var(--gold)');
+    return`<div class="queue-card${urgent?' urgent':''}">
+      <label class="queue-check" title="Select for bulk confirm"><input type="checkbox" onchange="toggleQueueSelect('${m.id}',this.checked)" ${_queueSelected.has(m.id)?'checked':''}></label>
+      <div class="queue-main">
+        <div class="queue-avatar">${esc(initials(m.name))}</div>
+        <div class="queue-info">
+          <div class="queue-name">${esc(m.name)}${urgent?'<span class="badge badge-expired" style="margin-left:6px">auto-archive soon</span>':''}</div>
+          <div class="queue-meta"><span class="queue-meta-id">${esc(m.id)}</span></div>
+          <div class="queue-meta"><span class="queue-ico">${iconSvg('mail',12)}</span><span>${esc(m.email||'no email')}</span></div>
+          <div class="queue-meta"><span class="queue-ico">${iconSvg('phone',12)}</span><span>${esc(m.contact||'—')}</span></div>
+        </div>
+      </div>
+      <div class="queue-detail">
+        <div class="queue-plan-row"><span class="queue-plan-name">${esc(plan?plan.name:'—')}</span><span class="badge badge-pending">Pending</span></div>
+        <div class="queue-price">₱${plan?Number(plan.price).toLocaleString():'0'}</div>
+        <div class="queue-date" style="color:${ageColor}">Registered ${formatDate(m.createdAt)} (${ageDays}d ago)</div>
+      </div>
+      <div class="queue-actions">
+        <button class="btn-primary btn-sm" onclick="openConfirmPayment('${m.id}')">💰 Confirm Payment</button>
+      </div>
+    </div>`;
+  }).join('');
+  const bulkBtn=_queueSelected.size?`<button class="btn-primary btn-sm" onclick="confirmSelectedPayments()">✓ Confirm Selected (${_queueSelected.size})</button>`:'';
+  el.innerHTML=`
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+    <div>
+      <div class="section-title" style="margin-bottom:4px">Pending Payments <span class="badge badge-expiring" style="margin-left:6px">${total}</span></div>
+      <div style="font-size:12px;color:var(--gray-500)">Members who self-registered and are awaiting counter payment. Unpaid sign-ups are auto-archived after ${PENDING_ARCHIVE_DAYS} days.</div>
+    </div>
+    ${bulkBtn}
+  </div>
+  <div class="queue-toolbar">
+    <input class="search-input" placeholder="Search by name, ID or email…" value="${esc(_queueSearch)}" oninput="_queueSearch=this.value;renderQueue()">
+    <select class="filter-sel" onchange="_queuePlanFilter=this.value;renderQueue()">
+      <option value="All">All Plans</option>
+      ${plans.map(p=>`<option value="${p.id}" ${p.id===_queuePlanFilter?'selected':''}>${esc(p.name)}</option>`).join('')}
+    </select>
+  </div>
+  ${pending.length?`<div class="queue-list">${items}</div>`:`<div class="table-card"><div class="empty-state"><div class="empty-icon">✅</div><p>All caught up! No pending payments right now.</p></div></div>`}`;
+}
+function toggleQueueSelect(id,checked){if(checked)_queueSelected.add(id);else _queueSelected.delete(id);renderQueue();}
+function confirmSelectedPayments(){
+  const ids=[..._queueSelected].filter(id=>Members.one(id));
+  if(!ids.length){toast('No members selected.','error');return;}
+  const names=ids.map(id=>Members.one(id).name);
+  const totalAmt=ids.reduce((s,id)=>{const m=Members.one(id);const p=m.planId?Plans.one(m.planId):null;return s+(p?Number(p.price):0);},0);
+  openConfirm(
+    `Confirm ${ids.length} payment${ids.length!==1?'s':''}?`,
+    `Mark <strong>${esc(names.length>2?names.slice(0,2).join(', ')+' +'+(names.length-2)+' more':names.join(', '))}</strong> as paid (₱${totalAmt.toLocaleString()})?<br><span style="font-size:12px;color:var(--gray-500)">Each member's QR activates immediately.</span>`,
+    ()=>{
+      ids.forEach(id=>{const m=Members.one(id);const p=m.planId?Plans.one(m.planId):null;applyPaymentConfirmation(id,p?Number(p.price):0,'Cash','');});
+      _queueSelected.clear();
+      toast(`${ids.length} payment${ids.length!==1?'s':''} confirmed.`);
+      updateQueueBadge();
+      renderQueue();
+      scanRenewals();
+    },
+    `✓ Confirm (${ids.length})`,
+    'btn-primary'
+  );
+}
+function openConfirmPayment(memberId){
+  _confirmPaymentMemberId=memberId;
+  const m=Members.one(memberId);
+  if(!m)return;
+  const plan=m.planId?Plans.one(m.planId):null;
+  document.getElementById('cpm_memberId').value=memberId;
+  document.getElementById('confirmPaymentError').style.display='none';
+  document.getElementById('cpm_summary').innerHTML=`
+    <div style="display:flex;align-items:center;gap:12px;padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,.06);margin-bottom:12px">
+      <div class="user-avatar" style="width:40px;height:40px;background:rgba(251,191,36,.15);color:var(--gold);flex-shrink:0">${esc(initials(m.name))}</div>
+      <div>
+        <div style="font-weight:800;color:var(--white);font-size:14px">${esc(m.name)}</div>
+        <div style="font-size:11px;font-family:monospace;color:var(--gray-500)">${esc(m.id)} · ${esc(m.email||'no email')}</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px">
+      <div style="background:var(--navy-700);border-radius:8px;padding:10px 12px"><div style="font-size:10px;color:var(--gray-500);text-transform:uppercase;letter-spacing:1px">Plan</div><div style="font-weight:700;color:var(--white);margin-top:2px">${esc(plan?plan.name:'—')}</div></div>
+      <div style="background:var(--navy-700);border-radius:8px;padding:10px 12px"><div style="font-size:10px;color:var(--gray-500);text-transform:uppercase;letter-spacing:1px">Plan Price</div><div style="font-weight:700;color:var(--green);margin-top:2px">₱${plan?Number(plan.price).toLocaleString():'0'}</div></div>
+      <div style="background:var(--navy-700);border-radius:8px;padding:10px 12px"><div style="font-size:10px;color:var(--gray-500);text-transform:uppercase;letter-spacing:1px">Duration</div><div style="font-weight:700;color:var(--white);margin-top:2px">${plan?plan.duration+' month(s)':'-'}</div></div>
+      <div style="background:var(--navy-700);border-radius:8px;padding:10px 12px"><div style="font-size:10px;color:var(--gray-500);text-transform:uppercase;letter-spacing:1px">New Expiry</div><div style="font-weight:700;color:var(--white);margin-top:2px">${plan?formatDate(addMonths(today(),plan.duration)):'—'}</div></div>
+    </div>`;
+  document.getElementById('cpm_amount').value=plan?plan.price:'';
+  document.getElementById('cpm_method').value='';
+  document.getElementById('cpm_reference').value='';
+  toggleCpmReference();
+  openModal('confirmPaymentModal');
+}
+function toggleCpmReference(){
+  const method=document.getElementById('cpm_method').value;
+  const wrap=document.getElementById('cpm_refWrap');
+  if(wrap)wrap.style.display=method==='GCash'?'block':'none';
+}
+function applyPaymentConfirmation(memberId,amount,method,reference){
+  const member=Members.one(memberId);
+  if(!member)return null;
+  const plan=member.planId?Plans.one(member.planId):null;
+  const start=today();
+  const newExpiry=addMonths(start,plan?plan.duration:1);
+  const now=new Date();
+  const newId=nextId(KEY.payments,'PAY');
+  const payments=Payments.all();
+  payments.push({id:newId,memberId,memberName:member.name,planId:member.planId,planName:plan?plan.name:'Unknown',amount,date:start,newExpiry,method,reference,notes:'',recordedBy:currentUser.name,recordedByUsername:currentUser.username,staffId:currentUser.id,status:'Paid',source:'activation',timestamp:now.getTime(),createdAt:start});
+  Payments.save(payments);
+  const nonce=newQrNonce(memberId);
+  Members.update(memberId,{status:'Active',planStart:start,startDate:start,expiryDate:newExpiry,qrNonce:nonce});
+  Members.update(memberId,{qrToken:qrTokenFor(memberId,start)});
+  resolveNotifsForMember(memberId);
+  _queueSelected.delete(memberId);
+  return member;
+}
+function confirmPayment(){
+  const memberId=document.getElementById('cpm_memberId').value;
+  const amount=parseFloat(document.getElementById('cpm_amount').value);
+  const method=document.getElementById('cpm_method').value;
+  const reference=document.getElementById('cpm_reference').value.trim();
+  const err=document.getElementById('confirmPaymentError');
+  err.style.display='none';
+  if(!memberId||!amount||!method){err.textContent='Please fill in all required fields.';err.style.display='block';return;}
+  if(amount<=0){err.textContent='Invalid payment amount.';err.style.display='block';return;}
+  if(method==='GCash'&&!reference){err.textContent='Please enter the GCash reference number.';err.style.display='block';return;}
+  const member=applyPaymentConfirmation(memberId,amount,method,reference);
+  if(!member){err.textContent='Member not found.';err.style.display='block';return;}
+  closeModal('confirmPaymentModal');
+  toast(`Payment confirmed — ${member.name} is now active.`);
+  updateQueueBadge();
+  renderQueue();
+  scanRenewals();
+}
+
+// ======================================================================
+// PANEL: QR SCANNER (entrance attendance via QR)
+// ======================================================================
+let _scanStream=null,_scanRaf=null,_scanCanvas=null,_scanCtx=null,_scanning=false,_scanLocked=false;
+function renderScanner(){
+  const el=document.getElementById('panelScanner');
+  el.innerHTML=`
+  <div style="display:grid;grid-template-columns:1.15fr 1fr;gap:16px;align-items:start">
+    <div class="scan-card">
+      <div class="scan-header">
+        <div>
+          <div class="section-title" style="margin-bottom:4px">Camera Scanner</div>
+          <div style="font-size:12px;color:var(--gray-500)">Point the camera at the member's QR code</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn-primary btn-sm" id="scanStartBtn" onclick="startScanner()">▶ Start Camera</button>
+          <button class="btn-secondary btn-sm" id="scanStopBtn" style="display:none" onclick="stopScanner()">■ Stop</button>
+        </div>
+      </div>
+      <div class="scan-viewport" id="scanViewport">
+        <video id="scanVideo" playsinline muted style="width:100%;height:100%;object-fit:cover;display:none"></video>
+        <div class="scan-placeholder" id="scanPlaceholder">${iconSvg('camera',36)}<div style="font-size:13px;color:var(--gray-500);margin-top:8px">Camera is off</div></div>
+        <div class="scan-corner tl"></div><div class="scan-corner tr"></div><div class="scan-corner bl"></div><div class="scan-corner br"></div>
+      </div>
+      <div id="scanError" class="error-msg" style="margin-top:10px"></div>
+    </div>
+    <div style="display:grid;gap:16px">
+      <div class="table-card">
+        <div class="table-header"><h3>Manual Entry</h3></div>
+        <div class="form-group" style="margin-bottom:12px">
+          <label>Paste / Type QR Token</label>
+          <input type="text" id="scanManualInput" placeholder="FCG.MEM-xxxx.yyyymmdd.xxxxxxxx" onkeydown="if(event.key==='Enter')scanManualToken()" style="font-family:monospace;font-size:12px">
+        </div>
+        <button class="btn-primary btn-sm" onclick="scanManualToken()">Validate Token</button>
+      </div>
+      <div id="scanResult" class="scan-result-wrap"></div>
+    </div>
+  </div>`;
+  stopScanner();
+  const manual=document.getElementById('scanManualInput');
+  if(manual)manual.value='';
+}
+function startScanner(){
+  const video=document.getElementById('scanVideo');
+  const placeholder=document.getElementById('scanPlaceholder');
+  const err=document.getElementById('scanError');
+  if(!video)return;
+  if(err)err.style.display='none';
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+    if(err){err.textContent='Camera not supported in this browser. Use Manual Entry instead.';err.style.display='block';}
+    return;
+  }
+  stopScanner();
+  navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}}).then(stream=>{
+    _scanStream=stream;
+    video.srcObject=stream;
+    video.style.display='block';
+    if(placeholder)placeholder.style.display='none';
+    const sb=document.getElementById('scanStartBtn');if(sb)sb.style.display='none';
+    const st=document.getElementById('scanStopBtn');if(st)st.style.display='';
+    video.play().then(()=>{
+      _scanCanvas=document.createElement('canvas');
+      _scanCtx=_scanCanvas.getContext('2d');
+      _scanning=true;
+      _scanLoop();
+    }).catch(()=>{});
+  }).catch(()=>{
+    if(err){err.textContent='Camera access denied. Use Manual Entry instead.';err.style.display='block';}
+  });
+}
+function stopScanner(){
+  _scanning=false;
+  if(_scanRaf){cancelAnimationFrame(_scanRaf);_scanRaf=null;}
+  if(_scanStream){_scanStream.getTracks().forEach(t=>t.stop());_scanStream=null;}
+  const video=document.getElementById('scanVideo');
+  if(video){video.srcObject=null;video.style.display='none';}
+  const placeholder=document.getElementById('scanPlaceholder');
+  if(placeholder)placeholder.style.display='';
+  const sb=document.getElementById('scanStartBtn');if(sb)sb.style.display='';
+  const st=document.getElementById('scanStopBtn');if(st)st.style.display='none';
+}
+function _scanLoop(){
+  if(!_scanning)return;
+  const video=document.getElementById('scanVideo');
+  if(!video||video.readyState!==video.HAVE_ENOUGH_DATA){_scanRaf=requestAnimationFrame(_scanLoop);return;}
+  const w=video.videoWidth,h=video.videoHeight;
+  if(w===0||h===0){_scanRaf=requestAnimationFrame(_scanLoop);return;}
+  _scanCanvas.width=w;_scanCanvas.height=h;
+  _scanCtx.drawImage(video,0,0,w,h);
+  const img=_scanCtx.getImageData(0,0,w,h);
+  const code=jsQR(img.data,img.width,img.height,{inversionAttempts:'dontInvert'});
+  if(code&&code.data&&!_scanLocked)processQrToken(code.data);
+  _scanRaf=requestAnimationFrame(_scanLoop);
+}
+function processQrToken(token){
+  if(!token)return;
+  if(_scanLocked){showScanResult('busy','Processing…','Wait a moment before the next scan.');return;}
+  const parsed=parseQrToken(token);
+  if(!parsed){showScanResult('invalid','Invalid QR Code','This is not a valid FitCore entrance QR.');return;}
+  if(parsed.dateStr!==today()){showScanResult('invalid','QR is Outdated','Entrance QRs rotate daily. Ask the member to refresh their QR.');return;}
+  const member=Members.one(parsed.memberId);
+  if(!member){showScanResult('invalid','Member Not Found','No member record matches this QR.');return;}
+  if(member.status==='pending_payment'){showScanResult('blocked','Payment Pending',member.name+' has not paid yet — send to the counter.');return;}
+  if(member.status==='Archived'){showScanResult('blocked','Account Archived','Member account is archived.');return;}
+  if(daysUntil(member.expiryDate)<0){showScanResult('blocked','Plan Expired',member.name+'\'s plan expired on '+formatDate(member.expiryDate)+'. Renew at the counter — entry blocked.');return;}
+  const now=new Date();
+  const last=Attendance.all().filter(a=>a.memberId===member.id).slice(-1)[0];
+  if(last&&last.date===today()&&last.checkInTs&&(now.getTime()-last.checkInTs)<QR_SCAN_DUP_WINDOW_MIN*60000){
+    const mins=Math.max(1,Math.ceil((QR_SCAN_DUP_WINDOW_MIN*60000-(now.getTime()-last.checkInTs))/60000));
+    showScanResult('blocked','Duplicate Scan Blocked',member.name+' already checked in at '+last.checkIn+'. Try again in ~'+mins+' min.');
+    return;
+  }
+  const time=now.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  Attendance.add({id:uid(),memberId:member.id,date:today(),time,checkIn:time,checkInTs:now.getTime(),checkOut:null,checkOutTs:null,duration:null,recordedBy:currentUser.name,scannedBy:currentUser.name,source:'qr'});
+  showScanResult('granted','Entry Granted',member.name+' ('+member.id+') — logged at '+time);
+  _scanLocked=true;
+  setTimeout(()=>{_scanLocked=false;},4000);
+}
+function scanManualToken(){
+  const input=document.getElementById('scanManualInput');
+  const err=document.getElementById('scanError');
+  if(!input)return;
+  const val=input.value.trim();
+  if(!val){if(err){err.textContent='Please paste or type the QR token.';err.style.display='block';}return;}
+  if(err)err.style.display='none';
+  processQrToken(val);
+}
+function showScanResult(type,title,sub){
+  const wrap=document.getElementById('scanResult');
+  if(!wrap)return;
+  const meta={
+    granted:{cls:'ok',ico:'✅',color:'var(--green)'},
+    blocked:{cls:'block',ico:'🚫',color:'var(--red)'},
+    invalid:{cls:'block',ico:'⚠️',color:'var(--red)'},
+    busy:{cls:'block',ico:'⏳',color:'var(--gold)'}
+  };
+  const m=meta[type]||meta.invalid;
+  wrap.innerHTML=`<div class="scan-result ${m.cls}">
+    <div style="font-size:30px">${m.ico}</div>
+    <div style="font-weight:800;color:${m.color};margin-top:8px">${esc(title)}</div>
+    ${sub?`<div style="font-size:12px;color:var(--gray-500);margin-top:4px">${esc(sub)}</div>`:''}
+  </div>`;
+  iconize(wrap);
 }
 
 // ======================================================================
@@ -2077,7 +3820,8 @@ function renderWalkin(){
   el.innerHTML=`
   <div class="page-actions">
     <div class="table-controls">
-      <input class="search-input" placeholder="Search visitor name…" value="${walkinSearch}" oninput="walkinSearch=this.value;walkinPage=1;refreshWalkinTable()">
+      <input class="search-input" placeholder="Search visitor name…" value="${esc(walkinSearch)}" oninput="walkinSearch=this.value;walkinPage=1;refreshWalkinTable()">
+      ${currentUser.role==='admin'?`<button class="btn-secondary" onclick="openWalkinSettingsModal()">⚙ Walk-In Price: ₱${getWalkinFee().toLocaleString()}</button>`:''}
     </div>
     <button class="btn-primary" onclick="openWalkinModal()">🚶 Register Walk-In</button>
   </div>
@@ -2095,25 +3839,74 @@ function refreshWalkinTable(){
   const thisMonth=new Date();
   const monthlyCount=Walkins.all().filter(w=>{const d=new Date(w.date);return d.getMonth()===thisMonth.getMonth()&&d.getFullYear()===thisMonth.getFullYear();}).length;
   document.getElementById('walkinStats').innerHTML=`
-    <div class="stat-card orange"><div class="stat-label">Today's Walk-Ins</div><div class="stat-value">${todayCount}</div><div class="stat-hint">₱${todayCount*100} collected today</div></div>
+    <div class="stat-card orange"><div class="stat-label">Today's Walk-Ins</div><div class="stat-value">${todayCount}</div><div class="stat-hint">₱${(todayCount*getWalkinFee()).toLocaleString()} collected today</div></div>
     <div class="stat-card green"><div class="stat-label">This Month</div><div class="stat-value">${monthlyCount}</div><div class="stat-hint">Walk-in visits</div></div>
     <div class="stat-card gold"><div class="stat-label">Total Walk-In Revenue</div><div class="stat-value" style="font-size:22px">₱${totalRevenue.toLocaleString()}</div><div class="stat-hint">All-time earnings</div></div>`;
   data=data.slice().reverse();
   const perPage=10;const total=data.length;const pages=Math.ceil(total/perPage)||1;
   const slice=data.slice((walkinPage-1)*perPage,walkinPage*perPage);
   const rows=slice.length?slice.map(w=>`<tr>
-    <td>${w.id}</td>
-    <td>${w.visitorName}</td>
+    <td>${esc(w.id)}</td>
+    <td>${esc(w.visitorName)}</td>
     <td>${formatDate(w.date)}</td>
-    <td>${w.time}</td>
+    <td>${esc(w.time)}</td>
     <td style="color:var(--green);font-weight:600">₱${Number(w.fee).toLocaleString()}</td>
-    <td>${w.recordedBy||'—'}</td>
+    <td>${esc(w.recordedBy||'—')}</td>
     <td><div class="td-actions"><button class="btn-icon" title="View Receipt" onclick="viewWalkinReceipt('${w.id}')">🧾</button></div></td>
   </tr>`).join(''):`<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">🚶</div><p>No walk-in records found</p></div></td></tr>`;
   let pag='';if(pages>1){pag=`<div class="pagination"><button class="page-btn" onclick="walkinPage=${walkinPage-1};refreshWalkinTable()" ${walkinPage===1?'disabled':''}>‹</button>${Array.from({length:pages},(_,i)=>`<button class="page-btn ${i+1===walkinPage?'active':''}" onclick="walkinPage=${i+1};refreshWalkinTable()">${i+1}</button>`).join('')}<button class="page-btn" onclick="walkinPage=${walkinPage+1};refreshWalkinTable()" ${walkinPage===pages?'disabled':''}>›</button><span class="page-info">${total} records</span></div>`;}
   document.getElementById('walkinTableCard').innerHTML=`
     <div class="table-header"><h3>Walk-In Records <span style="font-size:12px;font-weight:400;color:var(--gray-500);margin-left:6px">${total} record${total!==1?'s':''}</span></h3></div>
     <div style="overflow-x:auto"><table><thead><tr><th>ID</th><th>Visitor Name</th><th>Date</th><th>Time</th><th>Fee</th><th>Recorded By</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>${pag}`;
+}
+// ======================================================================
+// RECEIPT PRINT / PDF EXPORT (receipt-only clean sheet)
+// ======================================================================
+function printReceipt(){
+  const node=document.querySelector('#receiptBody .receipt');
+  if(!node){toast('No receipt to export.','error');return;}
+  const win=window.open('','_blank','width=560,height=760');
+  if(!win){toast('Please allow pop-ups to print or download the receipt.','error');return;}
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>FitCore Receipt</title><style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Roboto','Segoe UI',Arial,sans-serif;background:#fff;color:#0a0a0a;padding:26px;display:flex;justify-content:center;font-size:14px;line-height:1.5}
+  .sheet{width:100%;max-width:430px}
+  .receipt{background:#fff;color:#0a0a0a;padding:30px 28px 22px;border-radius:18px;position:relative;overflow:hidden;width:100%;border:1px solid #e6ebf4}
+  .receipt::before{content:'';position:absolute;top:0;left:0;right:0;height:5px;background:linear-gradient(90deg,#16a34a 0%,#fbbf24 50%,#b3bcb5 100%)}
+  .receipt-header{text-align:center;margin-bottom:16px}
+  .receipt-sticker{display:inline-flex;align-items:center;justify-content:center;margin-bottom:12px}
+  .receipt h2{font-family:'Arial Black',Impact,sans-serif;font-size:24px;font-weight:900;letter-spacing:4px;text-transform:uppercase;color:#0a0a0a;line-height:1;margin-bottom:6px}
+  .receipt h2 span{color:#16a34a}
+  .receipt-sub{font-size:10px;color:#8b96ad;letter-spacing:2px;text-transform:uppercase;font-weight:700}
+  .receipt-tag{display:inline-block;margin-top:12px;padding:5px 14px;border-radius:100px;font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase}
+  .tag-paid{background:linear-gradient(135deg,#bbf7d0,#86efac);color:#14532d;border:1px solid #86efac}
+  .tag-renew{background:linear-gradient(135deg,#fde68a,#fbbf24);color:#78350f;border:1px solid #fbbf24}
+  .tag-walkin{background:linear-gradient(135deg,#e5e7eb,#cbd5d1);color:#0a0a0a;border:1px solid #cbd5d1}
+  .receipt-meta{display:flex;justify-content:space-between;gap:12px;background:#f6f8fc;border:1px solid #e6ebf4;border-radius:10px;padding:10px 14px;margin-bottom:12px}
+  .receipt-meta div{min-width:0}
+  .receipt-meta span{display:block;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:#8b96ad;margin-bottom:2px}
+  .receipt-meta strong{font-size:12px;color:#0a0a0a;letter-spacing:.5px}
+  .receipt-body{padding:4px 2px}
+  .receipt-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:9px 0;border-bottom:1px dashed #dde3ee;font-size:13px}
+  .receipt-row:last-child{border-bottom:none}
+  .receipt-row span{color:#6d7ca0}
+  .receipt-row strong{color:#0a0a0a;font-weight:700;text-align:right}
+  .receipt-total{display:flex;justify-content:space-between;align-items:center;background:linear-gradient(135deg,rgba(34,197,94,.10),rgba(251,191,36,.08));border:1px solid rgba(34,197,94,.35);border-radius:12px;padding:14px 16px;margin-top:14px}
+  .receipt-total span{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:#15803d}
+  .receipt-total strong{font-size:24px;font-family:'Arial Black',Impact,sans-serif;font-weight:900;color:#15803d}
+  .receipt-foot{margin-top:16px;text-align:center}
+  .receipt-footer-note{font-size:11px;color:#8b96ad}
+  .receipt-barcode{width:170px;height:34px;margin:14px auto 8px;background:repeating-linear-gradient(90deg,#0a0a0a 0 2px,transparent 2px 5px,#0a0a0a 5px 6px,transparent 6px 10px);opacity:.85}
+  .receipt-thanks{font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#8b96ad}
+  @media print{
+    body{padding:0}
+    .receipt{border:none;border-radius:0;max-width:none;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    .receipt::before{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  }
+  </style></head><body><div class="sheet">${node.outerHTML}</div></body></html>`);
+  win.document.close();
+  win.focus();
+  setTimeout(function(){try{win.print();}catch(e){}},300);
 }
 function viewWalkinReceipt(id){
   const w=Walkins.all().find(x=>x.id===id);if(!w)return;
@@ -2132,7 +3925,7 @@ function viewWalkinReceipt(id){
           <rect x="13" y="17" width="5" height="14" rx="2" fill="white"/>
           <rect x="30" y="17" width="5" height="14" rx="2" fill="white"/>
           <rect x="18" y="22" width="12" height="4" rx="2" fill="white"/>
-          <defs><linearGradient id="rcGrad" x1="0" y1="0" x2="48" y2="48"><stop offset="0%" stop-color="#f4913f"/><stop offset="100%" stop-color="#d1621f"/></linearGradient></defs>
+          <defs><linearGradient id="rcGrad" x1="0" y1="0" x2="48" y2="48"><stop offset="0%" stop-color="#7ffa88"/><stop offset="100%" stop-color="#4ade80"/></linearGradient></defs>
         </svg>
       </div>
       <h2>FITCORE <span>GMS</span></h2>
@@ -2144,9 +3937,9 @@ function viewWalkinReceipt(id){
       <div><span>Visit Date</span><strong>${formatDate(w.date)}</strong></div>
     </div>
     <div class="receipt-body">
-      <div class="receipt-row"><span>Visitor Name</span><strong>${w.visitorName}</strong></div>
+      <div class="receipt-row"><span>Visitor Name</span><strong>${esc(w.visitorName)}</strong></div>
       <div class="receipt-row"><span>Visit Type</span><strong>Walk-In (Single Visit)</strong></div>
-      <div class="receipt-row"><span>Time In</span><strong>${recordedTime}</strong></div>
+      <div class="receipt-row"><span>Time In</span><strong>${esc(recordedTime)}</strong></div>
       <div class="receipt-row"><span>Payment Method</span><strong>Cash</strong></div>
     </div>
     <div class="receipt-total">
@@ -2154,7 +3947,7 @@ function viewWalkinReceipt(id){
       <strong>&#8369;${Number(w.fee).toLocaleString()}</strong>
     </div>
     <div class="receipt-foot">
-      <div class="receipt-footer-note">Recorded by <strong>${staffDisplay}</strong> &middot; ${formatDate(w.date)} ${recordedTime}</div>
+      <div class="receipt-footer-note">Recorded by <strong>${esc(staffDisplay)}</strong> &middot; ${formatDate(w.date)} ${esc(recordedTime)}</div>
       <div class="receipt-barcode" aria-hidden="true"></div>
       <div class="receipt-thanks">Train hard &middot; Stay strong &middot; See you at FitCore</div>
     </div>
@@ -2164,6 +3957,11 @@ function viewWalkinReceipt(id){
 function openWalkinModal(){
   document.getElementById('wi_name').value='';
   document.getElementById('walkinError').style.display='none';
+  const fee=getWalkinFee();
+  const feeEl=document.getElementById('walkinFeeDisplay');
+  if(feeEl)feeEl.textContent='₱'+formatPeso(fee);
+  const feeNote=document.getElementById('walkinFeeNote');
+  if(feeNote)feeNote.textContent='Daily rate · Single visit · Set by admin';
   document.getElementById('walkinFooterDefault').style.display='flex';
   document.getElementById('walkinFooterConfirm').style.display='none';
   openModal('walkinModal');
@@ -2173,6 +3971,8 @@ function walkinAskConfirm(){
   const err=document.getElementById('walkinError');
   err.style.display='none';
   if(!name){err.textContent="Please enter the visitor's full name to proceed.";err.style.display='block';return;}
+  const confEl=document.getElementById('walkinConfirmText');
+  if(confEl)confEl.innerHTML=`⚠️ Are you sure you want to record this walk-in and collect <strong>₱${formatPeso(getWalkinFee())}</strong>?`;
   document.getElementById('walkinFooterDefault').style.display='none';
   document.getElementById('walkinFooterConfirm').style.display='flex';
 }
@@ -2189,15 +3989,38 @@ function saveWalkin(){
   const now=new Date();
   const time=now.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
   const newId='WI-'+String(walkins.length+1).padStart(4,'0');
-  walkins.push({id:newId,visitorName:name,date:today(),time,fee:100,recordedBy:currentUser.username,createdAt:today()});
+  const fee=getWalkinFee();
+  walkins.push({id:newId,visitorName:sanitizeText(name),date:today(),time,fee,recordedBy:currentUser.username,createdAt:today()});
   Walkins.save(walkins);
-  toast(`Walk-in recorded for ${name}. Fee: ₱100.00`);
+  toast(`Walk-in recorded for ${name}. Fee: ₱${fee.toLocaleString()}.00`);
   closeModal('walkinModal');renderWalkin();
 }
 function deleteWalkin(id){
   openConfirm('Delete Walk-In','Are you sure you want to delete this walk-in record?',()=>{
     const walkins=Walkins.all().filter(w=>w.id!==id);Walkins.save(walkins);toast('Walk-in record deleted.','info');renderWalkin();
   });
+}
+function openWalkinSettingsModal(){
+  if(currentUser.role!=='admin'){toast('Only admins can change the walk-in price.','error');return;}
+  document.getElementById('wiFeeInput').value=getWalkinFee();
+  document.getElementById('walkinFeeError').style.display='none';
+  openModal('walkinSettingsModal');
+}
+function saveWalkinFee(){
+  if(currentUser.role!=='admin'){toast('Only admins can change the walk-in price.','error');return;}
+  const err=document.getElementById('walkinFeeError');
+  err.style.display='none';
+  const val=parseFloat(document.getElementById('wiFeeInput').value);
+  if(!val||val<=0){err.textContent='Please enter a valid price greater than zero.';err.style.display='block';return;}
+  if(val>10000){err.textContent='Price looks too high. Enter a reasonable daily rate.';err.style.display='block';return;}
+  setWalkinFee(val);
+  logActivity('Updated','Settings','Walk-in daily rate set to ₱'+val.toLocaleString(),'Daily walk-in fee');
+  toast(`Walk-in price updated to ₱${val.toLocaleString()}.00`);
+  closeModal('walkinSettingsModal');
+  renderWalkin();
+  const explore=document.getElementById('landingExplore');
+  if(explore&&explore.style.display!=='none')renderExplorePlans();
+  syncStaticWalkinPrice();
 }
 
 // ======================================================================
@@ -2218,7 +4041,7 @@ function renderPlans(){
     const benefits=(p.benefits||'').split(/\n|,/).map(b=>b.trim()).filter(Boolean);
     return`<div class="plan-card">
       <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:12px">
-        <div><div class="plan-card-name">${p.name}</div><span class="badge ${p.status==='Active'?'badge-active':'badge-inactive'}">${p.status}</span></div>
+        <div><div class="plan-card-name">${esc(p.name)}</div><span class="badge ${p.status==='Active'?'badge-active':'badge-inactive'}">${esc(p.status)}</span></div>
         ${!isStaff?`<div class="td-actions"><button class="btn-icon" onclick="openPlanModal('${p.id}')">✏️</button></div>`:''}
       </div>
       <div class="plan-card-price">₱${Number(p.price).toLocaleString()}</div>
@@ -2226,12 +4049,12 @@ function renderPlans(){
         <div style="background:var(--navy-700);border-radius:8px;padding:8px;text-align:center"><div style="font-size:10px;color:var(--gray-500);text-transform:uppercase;letter-spacing:.5px">Duration</div><div style="font-weight:700">${p.duration} mo.</div></div>
         <div style="background:var(--navy-700);border-radius:8px;padding:8px;text-align:center"><div style="font-size:10px;color:var(--gray-500);text-transform:uppercase;letter-spacing:.5px">Sessions</div><div style="font-weight:700">${p.sessions}</div></div>
       </div>
-      ${benefits.map(b=>`<div class="plan-feature">✓ ${b}</div>`).join('')}
+      ${benefits.map(b=>`<div class="plan-feature">✓ ${esc(b)}</div>`).join('')}
       <div style="margin-top:10px;font-size:11px;color:var(--gray-500)">${count} active member${count!==1?'s':''}</div>
     </div>`;}).join('');
   el.innerHTML=`
   <div class="page-actions">
-    ${isStaff?`<div style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);border-radius:10px;padding:16px 20px;font-size:13px;color:#60a5fa;width:100%">
+    ${isStaff?`<div style="background:rgba(179,188,181,.08);border:1px solid rgba(179,188,181,.25);border-radius:10px;padding:16px 20px;font-size:13px;color:#b3bcb5;width:100%">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-weight:700;font-size:14px;color:#93c5fd">
         <span style="font-size:18px">👁</span> View Only — Contact the Administrator to modify membership plans.
       </div>
@@ -2239,7 +4062,7 @@ function renderPlans(){
         <span style="font-size:22px">📞</span>
         <div>
           <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--gray-500);margin-bottom:2px">Admin Contact Number</div>
-          <div style="color:var(--white);font-weight:800;font-size:16px;letter-spacing:1px">${adminContact}</div>
+          <div style="color:var(--white);font-weight:800;font-size:16px;letter-spacing:1px">${esc(adminContact)}</div>
         </div>
       </div>
     </div>`:'<div></div>'}
@@ -2267,6 +4090,7 @@ function openPlanModal(id=null){
 }
 function toggleUnlimited(cb){document.getElementById('plf_sessions').disabled=cb.checked;if(cb.checked)document.getElementById('plf_sessions').value='';}
 function savePlan(){
+  if(!currentUser||currentUser.role!=='admin'){toast('Only admins can create or edit membership plans.','error');return;}
   const name=document.getElementById('plf_name').value.trim();
   const price=parseFloat(document.getElementById('plf_price').value);
   const dur=parseInt(document.getElementById('plf_dur').value);
@@ -2281,7 +4105,7 @@ function savePlan(){
   const plans=Plans.all();
   const dup=plans.find(p=>p.name.toLowerCase()===name.toLowerCase()&&p.id!==editingPlanId);
   if(dup){err.textContent='Plan name already in use. Please choose a different plan name.';err.style.display='block';return;}
-  const data={name,price,duration:dur,sessions,benefits,status};
+  const data={name:sanitizeText(name),price,duration:dur,sessions,benefits:sanitizeText(benefits),status};
   if(editingPlanId){
     const idx=plans.findIndex(p=>p.id===editingPlanId);
     if(idx>-1)plans[idx]={...plans[idx],...data};Plans.save(plans);toast('Plan updated.');
@@ -2298,21 +4122,21 @@ function renderExplorePlans(){
     const isFeatured=i===featuredIdx;
     const durLabel=p.duration===1?'/mo':(p.duration===3?'/3mo':'/'+p.duration+'mo');
     const sessLabel=p.sessions==='Unlimited'?'Unlimited Sessions':(p.sessions+' Sessions');
-    const benefitLines=p.benefits?p.benefits.split('\n').filter(b=>b.trim()).map(b=>`<li>&#10003; ${b.trim()}</li>`).join(''):'<li>&#10003; Gym Access</li>';
+    const benefitLines=p.benefits?p.benefits.split('\n').filter(b=>b.trim()).map(b=>`<li>&#10003; ${esc(b.trim())}</li>`).join(''):'<li>&#10003; Gym Access</li>';
     const badge=badges[i]||'Plan';
     return`<div class="explore-card${isFeatured?' featured':''} reveal reveal-d${i%4}">
-      <div class="ec-badge">${badge}</div>
-      <div class="ec-name">${p.name}</div>
-      <div class="ec-price">&#8369;${Number(p.price).toLocaleString()}<span>${durLabel}</span></div>
-      <ul class="ec-features">${benefitLines}<li>&#10003; ${sessLabel}</li></ul>
-      <button class="btn-primary ec-btn" onclick="showLandingSection('register',null)">Choose ${p.name} →</button>
+      <div class="ec-badge">${esc(badge)}</div>
+      <div class="ec-name">${esc(p.name)}</div>
+      <div class="ec-price">&#8369;${Number(p.price).toLocaleString()}<span>${esc(durLabel)}</span></div>
+      <ul class="ec-features">${benefitLines}<li>&#10003; ${esc(sessLabel)}</li></ul>
+      <button class="btn-primary ec-btn" onclick="startMemberSignup('${p.id}')">Choose ${esc(p.name)} →</button>
     </div>`;
   }).join('');
   // Always append the static Walk-In card at the end
   html+=`<div class="explore-card walkin-card reveal reveal-d3">
     <div class="ec-badge">No Commitment</div>
     <div class="ec-name">Walk-In</div>
-    <div class="ec-price">&#8369;100<span>/day</span></div>
+    <div class="ec-price">&#8369;${getWalkinFee().toLocaleString()}<span>/day</span></div>
     <ul class="ec-features"><li>&#10003; Full Gym Access</li><li>&#10003; Single Day Pass</li><li>&#10003; No Registration</li><li>&#10003; Pay at Front Desk</li></ul>
     <button class="btn-primary ec-btn btn-gold" onclick="showLandingSection('register',null)">Visit Us →</button>
     <div class="walkin-note">&#9888; For occasional visitors.<br>No membership required.</div>
@@ -2334,14 +4158,14 @@ function renderTrainers(){
   }
   container.innerHTML=trainers.map((t,i)=>{
     const name=t.coachName||t.name;
-    const specs=(t.specializations&&t.specializations.length)?t.specializations.slice(0,3).join(' · '):'Certified Trainer';
-    const days=(t.availableDays&&t.availableDays.length)?`<span>${iconSvg('calendar',12)} ${t.availableDays.join(', ')}</span>`:'';
-    const hours=(t.availableFrom&&t.availableTo)?`<span>${iconSvg('clock',12)} ${t.availableFrom} – ${t.availableTo}</span>`:'';
+    const specs=(t.specializations&&t.specializations.length)?t.specializations.slice(0,3).map(esc).join(' · '):'Certified Trainer';
+    const days=(t.availableDays&&t.availableDays.length)?`<span>${iconSvg('calendar',12)} ${t.availableDays.map(esc).join(', ')}</span>`:'';
+    const hours=(t.availableFrom&&t.availableTo)?`<span>${iconSvg('clock',12)} ${esc(t.availableFrom)} – ${esc(t.availableTo)}</span>`:'';
     return`<div class="trainer-card reveal reveal-d${i%4}">
-      <div class="tc-avatar">${initials(name)}</div>
-      <div class="tc-name">${name}</div>
+      <div class="tc-avatar">${esc(initials(name))}</div>
+      <div class="tc-name">${esc(name)}</div>
       <div class="tc-role">${specs}</div>
-      ${t.bio?`<p class="tc-bio">${t.bio}</p>`:''}
+      ${t.bio?`<p class="tc-bio">${esc(t.bio)}</p>`:''}
       <div class="tc-meta">${days}${hours}</div>
     </div>`;
   }).join('');
@@ -2418,9 +4242,10 @@ function initProgressBar(){
 }
 
 function deletePlan(id){
+  if(!currentUser||currentUser.role!=='admin'){toast('Only admins can delete membership plans.','error');return;}
   const p=Plans.one(id);
   if(activeCount>0){toast('Cannot delete this plan. There are active members currently enrolled in it.','error');return;}
-  openConfirm('Delete Plan',`Delete plan "${p?p.name:''}"?`,()=>{
+  openConfirm('Delete Plan',`Delete plan "${esc(p?p.name:'')}"?`,()=>{
     const plans=Plans.all().filter(p=>p.id!==id);Plans.save(plans);toast('Plan deleted.');renderPlans();renderExplorePlans();
   });
 }
@@ -2431,41 +4256,37 @@ function deletePlan(id){
 let reportType='revenue';
 function renderReports(){
   const el=document.getElementById('panelReports');
+  const isStaff=currentUser.role==='staff';
   el.innerHTML=`
   <div class="report-tabs">
     <button class="rtab ${reportType==='revenue'?'active':''}" onclick="reportType='revenue';renderReports()">💰 Revenue</button>
     <button class="rtab ${reportType==='attendance'?'active':''}" onclick="reportType='attendance';renderReports()">📋 Attendance</button>
     <button class="rtab ${reportType==='membership'?'active':''}" onclick="reportType='membership';renderReports()">👥 Membership</button>
-    <button class="rtab ${reportType==='trainer'?'active':''}" onclick="reportType='trainer';renderReports()">🏋️ Trainer Schedule</button>
-    <button class="rtab ${reportType==='activity'?'active':''}" onclick="reportType='activity';renderReports()">📝 Activity Log</button>
+    ${!isStaff?`<button class="rtab ${reportType==='trainer'?'active':''}" onclick="reportType='trainer';renderReports()">🏋️ Trainer Schedule</button>
+    <button class="rtab ${reportType==='activity'?'active':''}" onclick="reportType='activity';renderReports()">📝 Activity Log</button>`:''}
   </div>
+  ${isStaff&&(reportType==='trainer'||reportType==='activity')?(reportType='revenue',''):''}
   <div class="report-filters" id="reportFilters">
     <div class="form-group"><label>From Date</label><input type="date" id="rpt_from" class="search-input"></div>
-    <div class="form-group"><label>To Date</label><input type="date" id="rpt_to" class="search-input" value="${today()}"></div>
-    ${reportType==='revenue'?`<div class="form-group"><label>Plan</label><select id="rpt_plan" class="filter-sel"><option value="all">All Plans</option>${Plans.all().map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}</select></div>`:''}
-    ${reportType==='attendance'?`<div class="form-group"><label>Member</label><select id="rpt_trainer" class="filter-sel"><option value="all">All Members</option>${Members.all().filter(m=>m.status!=='Archived').map(m=>`<option value="${m.id}">${m.name}</option>`).join('')}</select></div>`:''}
-    ${reportType==='membership'?`<div class="form-group"><label>Search Member</label><div style="position:relative"><input type="text" id="rpt_member_search" class="search-input" placeholder="Type member name…" oninput="filterMemberReportList(this.value)" onfocus="filterMemberReportList(this.value)" autocomplete="off" style="width:100%"><div id="rpt_member_drop" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:var(--navy-800);border:1.5px solid var(--orange);border-radius:10px;z-index:200;max-height:240px;overflow-y:auto;box-shadow:0 12px 32px rgba(0,0,0,.6)">${(()=>{const active=Members.all().filter(m=>m.status!=='Archived');const deleted=Members.all().filter(m=>m.status==='Archived');let html='';if(active.length){html+=`<div style="padding:6px 12px 4px;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:var(--green);background:rgba(52,211,153,.05);border-bottom:1px solid rgba(52,211,153,.12);position:sticky;top:0">✓ Active Members</div>`;html+=active.map(m=>`<div class="country-item" style="padding:9px 14px" onclick="selectMemberReport('${m.id}','${m.name.replace(/'/g,"\\'")}')"><span style="font-weight:600">${m.name}</span></div>`).join('');}if(deleted.length){html+=`<div style="padding:6px 12px 4px;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:#fb8a8a;background:rgba(248,113,113,.05);border-top:1px solid rgba(248,113,113,.15);border-bottom:1px solid rgba(248,113,113,.1);position:sticky;top:0">⚠ Deleted Members</div>`;html+=deleted.map(m=>`<div class="country-item" style="padding:9px 14px;opacity:.75" onclick="selectMemberReport('${m.id}','${m.name.replace(/'/g,"\\'")}')"><span style="font-weight:600;color:var(--gray-300)">${m.name}</span><span style="margin-left:8px;font-size:9px;font-weight:800;color:#fb8a8a;background:rgba(248,113,113,.15);border:1px solid rgba(248,113,113,.25);border-radius:4px;padding:1px 6px">DELETED</span></div>`).join('');}return html;})()}</div></div><input type="hidden" id="rpt_member_id" value="all"></div>`:''}
+    <div class="form-group"><label>To Date</label><input type="date" id="rpt_to" class="search-input"></div>
+    ${reportType==='revenue'?`<div class="form-group"><label>Plan</label><select id="rpt_plan" class="filter-sel"><option value="all">All Plans</option>${Plans.all().map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div>`:''}
+    ${reportType==='attendance'?`<div class="form-group"><label>Member</label><select id="rpt_member" class="filter-sel"><option value="all">All Members</option>${Members.all().filter(m=>m.status!=='Archived').map(m=>`<option value="${m.id}">${esc(m.name)}</option>`).join('')}</select></div>`:''}
+    ${reportType==='membership'?`<div class="form-group"><label>Search Member</label><div style="position:relative"><input type="text" id="rpt_member_search" class="search-input" placeholder="Type member name…" oninput="filterMemberReportList(this.value)" onfocus="filterMemberReportList(this.value)" autocomplete="off" style="width:100%"><div id="rpt_member_drop" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:var(--navy-800);border:1.5px solid var(--orange);border-radius:10px;z-index:200;max-height:240px;overflow-y:auto;box-shadow:0 12px 32px rgba(0,0,0,.6)">${(()=>{const active=Members.all().filter(m=>m.status!=='Archived');const deleted=Members.all().filter(m=>m.status==='Archived');let html='';if(active.length){html+=`<div style="padding:6px 12px 4px;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:var(--green);background:rgba(127,250,136,.05);border-bottom:1px solid rgba(127,250,136,.12);position:sticky;top:0">✓ Active Members</div>`;html+=active.map(m=>`<div class="country-item" style="padding:9px 14px" onclick="selectMemberReport('${m.id}','${esc(m.name).replace(/'/g,"&#39;")}')"><span style="font-weight:600">${esc(m.name)}</span></div>`).join('');}if(deleted.length){html+=`<div style="padding:6px 12px 4px;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:#fca5a5;background:rgba(239,68,68,.05);border-top:1px solid rgba(239,68,68,.15);border-bottom:1px solid rgba(239,68,68,.1);position:sticky;top:0">⚠ Deleted Members</div>`;html+=deleted.map(m=>`<div class="country-item" style="padding:9px 14px;opacity:.75" onclick="selectMemberReport('${m.id}','${esc(m.name).replace(/'/g,"&#39;")}')"><span style="font-weight:600;color:var(--gray-300)">${esc(m.name)}</span><span style="margin-left:8px;font-size:9px;font-weight:800;color:#fca5a5;background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.25);border-radius:4px;padding:1px 6px">DELETED</span></div>`).join('');}return html;})()}</div></div><input type="hidden" id="rpt_member_id" value="all"></div>`:''}
 
-    ${reportType==='trainer'?`<div class="form-group"><label>Search Trainer</label><div style="position:relative"><input type="text" id="rpt_trainer_search" class="search-input" placeholder="Type trainer name…" oninput="filterTrainerReportList(this.value)" autocomplete="off" style="width:100%"><div id="rpt_trainer_drop" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--navy-800);border:1.5px solid var(--orange);border-radius:8px;z-index:200;max-height:180px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.5)">${Users.all().filter(u=>u.role==='trainer').map(u=>`<div class="country-item" onclick="selectTrainerReport('${u.id}','${u.name.replace(/'/g,"\\'")}')"><span>${u.name}</span></div>`).join('')}</div></div><input type="hidden" id="rpt_trainer_filter" value="all"></div>`:''}
+    ${reportType==='trainer'?`<div class="form-group"><label>Search Trainer</label><div style="position:relative"><input type="text" id="rpt_trainer_search" class="search-input" placeholder="Type trainer name…" oninput="filterTrainerReportList(this.value)" autocomplete="off" style="width:100%"><div id="rpt_trainer_drop" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--navy-800);border:1.5px solid var(--orange);border-radius:8px;z-index:200;max-height:180px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.5)">${Users.all().filter(u=>u.role==='trainer').map(u=>`<div class="country-item" onclick="selectTrainerReport('${u.id}','${esc(u.name).replace(/'/g,"&#39;")}')"><span>${esc(u.name)}</span></div>`).join('')}</div></div><input type="hidden" id="rpt_trainer_filter" value="all"></div>`:''}
 
     ${reportType==='activity'?`<div class="form-group"><label>Category</label><select id="rpt_act_cat" class="filter-sel"><option value="all">All</option><option value="Member">Member</option><option value="Session">Session</option></select></div><div class="form-group"><label>Action</label><select id="rpt_act_action" class="filter-sel"><option value="all">All Actions</option><option value="Added">Added</option><option value="Edited">Edited</option><option value="Deleted">Deleted</option><option value="Status Changed">Status Changed</option></select></div>`:''}
     <div class="form-group" style="align-self:end"><button class="btn-primary" onclick="generateReport()">Generate Report</button></div>
   </div>
   <div class="report-output" id="reportOutput"></div>`;
 }
-function reportDocHead(title,from,to){
-  const rangeLabel=from&&to?(from===to?formatDate(from):`${formatDate(from)} — ${formatDate(to)}`):(from||to?`${from||'…'} – ${to||'…'}`:'All time');
-  return `<div class="report-doc-head">
-    <div class="rdh-brand"><span class="rdh-logo">F</span><div><div class="rdh-name">FITCORE <em>GMS</em></div><div class="rdh-tag">Gym Management System</div></div></div>
-    <div class="rdh-right"><div class="rdh-title">${title}</div><div class="rdh-meta">${rangeLabel} &middot; Generated ${formatDateTime(new Date().toISOString())} by ${currentUser?currentUser.name:'—'}</div></div>
-  </div>`;
-}
 function generateReport(){
-  const from=document.getElementById('rpt_from')?.value||'';
-  const to=document.getElementById('rpt_to')?.value||today();
+  const fromInput=document.getElementById('rpt_from')?.value||'';
+  const toInput=document.getElementById('rpt_to')?.value||'';
+  const from=fromInput;
+  const to=toInput||today();
   const output=document.getElementById('reportOutput');
   output.classList.add('visible');
-  const docHead=reportDocHead({revenue:'Revenue Report',attendance:'Attendance Report',membership:'Membership Report',trainer:'Trainer Schedule Report',activity:'Activity Log Report'}[reportType]||'Report',from,to);
   if(reportType==='revenue'){
     let data=Payments.all();
     if(from)data=data.filter(p=>p.date>=from);
@@ -2477,20 +4298,22 @@ function generateReport(){
     if(from)walkins=walkins.filter(w=>w.date>=from);
     if(to)walkins=walkins.filter(w=>w.date<=to);
     const walkinRevenue=walkins.reduce((a,w)=>a+Number(w.fee),0);
-    if(!data.length&&!walkins.length){output.innerHTML=docHead+`<div class="empty-state"><div class="empty-icon">📊</div><p>No data found for the selected filters. Try adjusting the date range.</p></div>`;return;}
+    if(!data.length&&!walkins.length){output.innerHTML=`<div class="empty-state"><div class="empty-icon">📊</div><p>No data found for the selected filters. Try adjusting the date range.</p></div>`;return;}
     const memberRevenue=data.reduce((a,p)=>a+Number(p.amount),0);
     const total=memberRevenue+walkinRevenue;
-    const avgAmount=data.length?memberRevenue/data.length:0;
+    const txCount=data.length+walkins.length;
+    const avgAmount=txCount?total/txCount:0;
     // Group by month (combined)
     const byMonth={};
     data.forEach(p=>{const m=p.date.slice(0,7);byMonth[m]=(byMonth[m]||0)+Number(p.amount);});
     walkins.forEach(w=>{const m=w.date.slice(0,7);byMonth[m]=(byMonth[m]||0)+Number(w.fee);});
     const months=Object.keys(byMonth).sort();
+    const monthShort=m=>new Date(m+'-01').toLocaleString('en-US',{month:'short'});
     const maxVal=Math.max(...Object.values(byMonth),1);
     const barW=50;const gap=16;const chartH=120;
-    const bars=months.map((m,i)=>{const v=byMonth[m];const bh=Math.max(4,(v/maxVal)*chartH);const x=i*(barW+gap)+10;const y=chartH-bh+20;return`<g><rect x="${x}" y="${y}" width="${barW}" height="${bh}" rx="5" fill="url(#repBarGrad)"/><rect x="${x}" y="${y}" width="${barW}" height="3" rx="1.5" fill="rgba(255,255,255,.35)"/><text x="${x+barW/2}" y="${chartH+32}" text-anchor="middle" fill="#94a3b8" font-size="10">${m.slice(5)}</text><text x="${x+barW/2}" y="${y-4}" text-anchor="middle" fill="#f4913f" font-size="9" font-weight="700">₱${v>=1000?(v/1000).toFixed(1)+'k':v}</text></g>`;}).join('');
+    const bars=months.map((m,i)=>{const v=byMonth[m];const bh=Math.max(4,(v/maxVal)*chartH);const x=i*(barW+gap)+10;const y=chartH-bh+20;return`<g><rect x="${x}" y="${y}" width="${barW}" height="${bh}" rx="5" fill="url(#repBarGrad)"/><rect x="${x}" y="${y}" width="${barW}" height="3" rx="1.5" fill="rgba(255,255,255,.35)"/><text x="${x+barW/2}" y="${chartH+32}" text-anchor="middle" fill="#b3bcb5" font-size="10">${monthShort(m)}</text><text x="${x+barW/2}" y="${y-4}" text-anchor="middle" fill="#7ffa88" font-size="9" font-weight="700">₱${v>=1000?(v/1000).toFixed(1)+'k':v}</text></g>`;}).join('');
     const svgW=Math.max(300,months.length*(barW+gap)+30);
-    const gridLines=[20,50,80,110,140].map(y=>`<line x1="10" y1="${y}" x2="${svgW-10}" y2="${y}" stroke="rgba(148,163,184,.12)" stroke-width="1"/>`).join('');
+    const gridLines=[20,50,80,110,140].map(y=>`<line x1="10" y1="${y}" x2="${svgW-10}" y2="${y}" stroke="rgba(179,188,181,.12)" stroke-width="1"/>`).join('');
     const revUsers=Users.all();
     function revRecorderLabel(name){
       if(!name||name==='—')return'—';
@@ -2498,19 +4321,19 @@ function generateReport(){
       if(!u)return name;
       const roleMap={admin:'Admin',staff:'Staff',trainer:'Trainer'};
       const tag=roleMap[u.role]||u.role;
-      const col=u.role==='admin'?'var(--orange)':u.role==='trainer'?'var(--green)':'#aab5ff';
-      return`${u.name} <span style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;background:rgba(255,255,255,.07);color:${col};margin-left:4px">${tag}</span>`;
+      const col=u.role==='admin'?'var(--orange)':u.role==='trainer'?'var(--green)':'#d7ddd8';
+      return`${esc(u.name)} <span style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;background:rgba(255,255,255,.07);color:${col};margin-left:4px">${esc(tag)}</span>`;
     }
-    const rows=data.slice().reverse().map(p=>`<tr><td>${p.id}</td><td>${p.memberName}</td><td>${p.planName}</td><td style="color:var(--green)">₱${Number(p.amount).toLocaleString()}</td><td>${formatDate(p.date)}</td><td>${p.method}</td><td>${revRecorderLabel(p.recordedBy)}</td><td><span class="badge badge-paid">Membership</span></td></tr>`).join('');
-    const walkinRows=walkins.slice().reverse().map(w=>`<tr><td>${w.id}</td><td>${w.visitorName}</td><td>Walk-In</td><td style="color:var(--orange)">₱${Number(w.fee).toLocaleString()}</td><td>${formatDate(w.date)}</td><td>Cash</td><td>${revRecorderLabel(w.recordedBy)}</td><td><span class="badge badge-pending">Walk-In</span></td></tr>`).join('');
-    output.innerHTML=docHead+`
+    const rows=data.slice().reverse().map(p=>`<tr><td>${esc(p.id)}</td><td>${esc(p.memberName)}</td><td>${esc(p.planName)}</td><td style="color:var(--green)">₱${Number(p.amount).toLocaleString()}</td><td>${formatDate(p.date)}</td><td>${esc(p.method)}</td><td>${revRecorderLabel(p.recordedBy)}</td><td><span class="badge badge-paid">Membership</span></td></tr>`).join('');
+    const walkinRows=walkins.slice().reverse().map(w=>`<tr><td>${esc(w.id)}</td><td>${esc(w.visitorName)}</td><td>Walk-In</td><td style="color:var(--orange)">₱${Number(w.fee).toLocaleString()}</td><td>${formatDate(w.date)}</td><td>Cash</td><td>${revRecorderLabel(w.recordedBy)}</td><td><span class="badge badge-pending">Walk-In</span></td></tr>`).join('');
+    output.innerHTML=`
     <div class="stats-grid">
       <div class="stat-card orange"><div class="stat-label">Total Revenue</div><div class="stat-value" style="font-size:22px">₱${total.toLocaleString()}</div><div class="stat-hint">Memberships + Walk-Ins</div></div>
       <div class="stat-card green"><div class="stat-label">Membership Revenue</div><div class="stat-value" style="font-size:22px">₱${memberRevenue.toLocaleString()}</div></div>
-      <div class="stat-card blue" style="border-left-color:#fbbf24"><div class="stat-label">Walk-In Revenue</div><div class="stat-value" style="font-size:22px">₱${walkinRevenue.toLocaleString()}</div><div class="stat-hint">${walkins.length} visits × ₱100</div></div>
+      <div class="stat-card blue" style="border-left-color:#fbbf24"><div class="stat-label">Walk-In Revenue</div><div class="stat-value" style="font-size:22px">₱${walkinRevenue.toLocaleString()}</div><div class="stat-hint">${walkins.length} visit${walkins.length!==1?'s':''}${walkins.length?` · avg ₱${(walkinRevenue/walkins.length).toFixed(0)} per visit`:''}</div></div>
       <div class="stat-card gold"><div class="stat-label">Avg Transaction</div><div class="stat-value" style="font-size:22px">₱${avgAmount.toFixed(0)}</div></div>
     </div>
-    ${months.length?`<div class="chart-card" style="margin-bottom:20px"><div class="chart-title">Combined Revenue by Month</div><svg viewBox="0 0 ${svgW} 160" style="height:160px"><defs><linearGradient id="repBarGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f4913f"/><stop offset="100%" stop-color="#d1621f"/></linearGradient></defs>${gridLines}${bars}</svg></div>`:''}
+    ${months.length?`<div class="chart-card" style="margin-bottom:20px"><div class="chart-title">Combined Revenue by Month</div><svg viewBox="0 0 ${svgW} 160" style="height:160px"><defs><linearGradient id="repBarGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#7ffa88"/><stop offset="100%" stop-color="#4ade80"/></linearGradient></defs>${gridLines}${bars}</svg></div>`:''}
     <div class="table-card">
       <div class="table-header"><h3>Revenue Records</h3><div style="display:flex;gap:8px"><button class="btn-secondary btn-sm" onclick="printReport()">🖨️ Print</button><button class="btn-secondary btn-sm" onclick="exportCSV('revenue')">📥 Export CSV</button></div></div>
       <div style="overflow-x:auto"><table><thead><tr><th>ID</th><th>Name</th><th>Plan / Type</th><th>Amount</th><th>Date</th><th>Method</th><th>Recorded By</th><th>Type</th></tr></thead><tbody>${rows}${walkinRows}</tbody></table></div>
@@ -2519,26 +4342,26 @@ function generateReport(){
     let data=Attendance.all();
     if(from)data=data.filter(a=>a.date>=from);
     if(to)data=data.filter(a=>a.date<=to);
-    const trainerFilter=document.getElementById('rpt_trainer')?.value||'all';
-    if(trainerFilter!=='all'){
-      const tSessions=Sessions.all().filter(s=>s.trainerId===trainerFilter).map(s=>s.memberId);
-      data=data.filter(a=>tSessions.includes(a.memberId));
+    const memberFilter=document.getElementById('rpt_member')?.value||'all';
+    if(memberFilter!=='all'){
+      const memberIds=Sessions.all().filter(s=>s.memberId===memberFilter).map(s=>s.memberId);
+      data=data.filter(a=>memberIds.includes(a.memberId));
     }
-    if(!data.length){output.innerHTML=docHead+`<div class="empty-state"><div class="empty-icon">📊</div><p>No data found for the selected filters. Try adjusting the date range.</p></div>`;return;}
+    if(!data.length){output.innerHTML=`<div class="empty-state"><div class="empty-icon">📊</div><p>No data found for the selected filters. Try adjusting the date range.</p></div>`;return;}
     const checkedIn=data.filter(a=>a.checkIn&&!a.checkOut).length;
     const completed=data.filter(a=>a.checkOut).length;
     const users=Users.all();
     function recorderLabel(name){
       if(!name||name==='—')return'—';
       const u=users.find(x=>x.name===name||x.username===name);
-      if(!u)return name;
+      if(!u)return esc(name);
       const roleMap={admin:'Admin',staff:'Staff',trainer:'Trainer'};
       const tag=roleMap[u.role]||u.role;
-      const col=u.role==='admin'?'var(--orange)':u.role==='trainer'?'var(--green)':'#aab5ff';
-      return`${u.name} <span style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;background:rgba(255,255,255,.07);color:${col};margin-left:4px">${tag}</span>`;
+      const col=u.role==='admin'?'var(--orange)':u.role==='trainer'?'var(--green)':'#d7ddd8';
+      return`${esc(u.name)} <span style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;background:rgba(255,255,255,.07);color:${col};margin-left:4px">${esc(tag)}</span>`;
     }
-    const rows=data.slice().reverse().map(a=>{const m=Members.all().find(x=>x.id===a.memberId);return`<tr><td>${formatDate(a.date)}</td><td>${a.checkIn||a.time||'—'}</td><td>${a.checkOut||'<span style="color:var(--gold)">In Gym</span>'}</td><td>${a.duration||'—'}</td><td>${m?m.name:'Unknown'}</td><td>${recorderLabel(a.recordedBy)}</td></tr>`;}).join('');
-    output.innerHTML=docHead+`
+    const rows=data.slice().reverse().map(a=>{const m=Members.all().find(x=>x.id===a.memberId);return`<tr><td>${formatDate(a.date)}</td><td>${esc(a.checkIn||a.time||'—')}</td><td>${a.checkOut?esc(a.checkOut):'<span style="color:var(--gold)">In Gym</span>'}</td><td>${esc(a.duration||'—')}</td><td>${esc(m?m.name:'Unknown')}</td><td>${recorderLabel(a.recordedBy)}</td></tr>`;}).join('');
+    output.innerHTML=`
     <div class="stats-grid">
       <div class="stat-card orange"><div class="stat-label">Total Check-Ins</div><div class="stat-value">${data.length}</div></div>
       <div class="stat-card green"><div class="stat-label">Completed</div><div class="stat-value">${completed}</div><div class="stat-hint">Checked out</div></div>
@@ -2557,7 +4380,7 @@ function generateReport(){
     if(to)sessions=sessions.filter(s=>s.date<=to);
     const trainerFil=document.getElementById('rpt_trainer_filter')?.value||'all';
     if(trainerFil!=='all')sessions=sessions.filter(s=>s.trainerId===trainerFil);
-    if(!sessions.length){output.innerHTML=docHead+`<div class="empty-state"><div class="empty-icon">📊</div><p>No trainer schedule data found for the selected filters.</p></div>`;return;}
+    if(!sessions.length){output.innerHTML=`<div class="empty-state"><div class="empty-icon">📊</div><p>No trainer schedule data found for the selected filters.</p></div>`;return;}
     const totalSessions=sessions.length;
     const uniqueTrainers=trainerFil!=='all'?1:[...new Set(sessions.map(s=>s.trainerId))].length;
     const uniqueMembers=[...new Set(sessions.map(s=>s.memberId).filter(Boolean))].length;
@@ -2571,32 +4394,32 @@ function generateReport(){
       const statusCls={Scheduled:'badge-pending',Completed:'badge-active',Cancelled:'badge-locked'}[s.status]||'';
       const timeDisplay=s.time||(s.startTime?s.startTime+(s.endTime?' – '+s.endTime:''):'—');
       const createdByUser=s.createdBy?allUsers.find(u=>u.name===s.createdBy||u.username===s.createdByUsername):null;
-      const roleColorMap={admin:'var(--orange)',staff:'#aab5ff',trainer:'var(--green)'};
+      const roleColorMap={admin:'var(--orange)',staff:'#d7ddd8',trainer:'var(--green)'};
       const roleColor=createdByUser?roleColorMap[createdByUser.role]||'var(--gray-300)':'var(--gray-300)';
       const roleTag=createdByUser?`<span style="font-size:9px;font-weight:800;padding:2px 6px;border-radius:4px;background:rgba(255,255,255,.07);color:${roleColor};margin-left:4px;text-transform:uppercase">${createdByUser.role}</span>`:'';
       const editedByUser=s.editedBy?allUsers.find(u=>u.name===s.editedBy||u.username===s.editedByUsername):null;
       const editedRoleColor=editedByUser?roleColorMap[editedByUser.role]||'var(--gray-300)':'var(--gray-300)';
       const editedRoleTag=editedByUser?`<span style="font-size:9px;font-weight:800;padding:2px 5px;border-radius:4px;background:rgba(255,255,255,.07);color:${editedRoleColor};margin-left:4px;text-transform:uppercase">${editedByUser.role}</span>`:'';
-      const createdByDisplay=s.createdBy?`<div style="font-size:12px;font-weight:600">${s.createdBy}${roleTag}</div>${s.editedBy?`<div style="font-size:11px;color:var(--gray-500);margin-top:2px">✎ ${s.editedBy}${editedRoleTag}</div>`:''}`:'<span style="color:var(--gray-500)">—</span>';
+      const createdByDisplay=s.createdBy?`<div style="font-size:12px;font-weight:600">${esc(s.createdBy)}${roleTag}</div>${s.editedBy?`<div style="font-size:11px;color:var(--gray-500);margin-top:2px">✎ ${esc(s.editedBy)}${editedRoleTag}</div>`:''}`:'<span style="color:var(--gray-500)">—</span>';
       return`<tr>
         <td>${formatDate(s.date)}</td>
-        <td><strong>${trainerName}</strong></td>
-        <td>${timeDisplay}</td>
-        <td>${s.type||s.sessionType||'—'}</td>
-        <td>${memberName}</td>
-        <td><span class="badge ${statusCls}">${s.status}</span></td>
+        <td><strong>${esc(trainerName)}</strong></td>
+        <td>${esc(timeDisplay)}</td>
+        <td>${esc(s.type||s.sessionType||'—')}</td>
+        <td>${esc(memberName)}</td>
+        <td><span class="badge ${statusCls}">${esc(s.status)}</span></td>
         <td>${createdByDisplay}</td>
-        <td>${s.notes||'—'}</td>
+        <td>${esc(s.notes||'—')}</td>
       </tr>`;
     }).join('');
     const trainerFil2=document.getElementById('rpt_trainer_filter')?.value||'all';
     const singleTrainer=trainerFil2!=='all'?allUsers.find(u=>u.id===trainerFil2):null;
-    output.innerHTML=docHead+`
+    output.innerHTML=`
     <div class="stats-grid">
-      <div class="stat-card orange"><div class="stat-label">Total Sessions</div><div class="stat-value">${totalSessions}</div>${singleTrainer?`<div class="stat-hint">${singleTrainer.name}</div>`:''}</div>
+      <div class="stat-card orange"><div class="stat-label">Total Sessions</div><div class="stat-value">${totalSessions}</div>${singleTrainer?`<div class="stat-hint">${esc(singleTrainer.name)}</div>`:''}</div>
       <div class="stat-card green"><div class="stat-label">Completed</div><div class="stat-value">${statusCounts.Completed}</div></div>
       <div class="stat-card gold"><div class="stat-label">Scheduled</div><div class="stat-value">${statusCounts.Scheduled}</div></div>
-      <div class="stat-card blue" style="border-left-color:#f87171"><div class="stat-label">Cancelled</div><div class="stat-value">${statusCounts.Cancelled}</div></div>
+      <div class="stat-card blue" style="border-left-color:#ef4444"><div class="stat-label">Cancelled</div><div class="stat-value">${statusCounts.Cancelled}</div></div>
       ${!singleTrainer?`<div class="stat-card blue"><div class="stat-label">Trainers</div><div class="stat-value">${uniqueTrainers}</div></div>`:`<div class="stat-card blue"><div class="stat-label">Members Handled</div><div class="stat-value">${uniqueMembers}</div></div>`}
     </div>
     <div class="table-card">
@@ -2613,15 +4436,15 @@ function generateReport(){
     const actF=document.getElementById('rpt_act_action')?.value||'all';
     if(catF!=='all')log=log.filter(e=>e.category===catF);
     if(actF!=='all')log=log.filter(e=>e.action===actF);
-    const actionColor={'Added':'#34d399','Edited':'#fbbf24','Deleted':'#f87171','Status Changed':'#60a5fa'};
-    const actionBg={'Added':'rgba(52,211,153,.12)','Edited':'rgba(251,191,36,.12)','Deleted':'rgba(248,113,113,.12)','Status Changed':'rgba(96,165,250,.12)'};
+    const actionColor={'Added':'#7ffa88','Edited':'#fbbf24','Deleted':'#ef4444','Status Changed':'#b3bcb5'};
+    const actionBg={'Added':'rgba(127,250,136,.12)','Edited':'rgba(251,191,36,.12)','Deleted':'rgba(239,68,68,.12)','Status Changed':'rgba(96,165,250,.12)'};
     const catIcon={'Member':'👤','Session':'📅'};
-    const roleColorMap={admin:'var(--orange)',staff:'#aab5ff',trainer:'var(--green)'};
+    const roleColorMap={admin:'var(--orange)',staff:'#d7ddd8',trainer:'var(--green)'};
     const totalAdded=log.filter(e=>e.action==='Added').length;
     const totalEdited=log.filter(e=>e.action==='Edited').length;
     const totalDeleted=log.filter(e=>e.action==='Deleted').length;
     const totalStatus=log.filter(e=>e.action==='Status Changed').length;
-    if(!log.length){output.innerHTML=docHead+`<div class="empty-state"><div class="empty-icon">📝</div><p>No activity recorded yet. Actions like adding, editing, or deleting members and sessions will appear here.</p></div>`;return;}
+    if(!log.length){output.innerHTML=`<div class="empty-state"><div class="empty-icon">📝</div><p>No activity recorded yet. Actions like adding, editing, or deleting members and sessions will appear here.</p></div>`;return;}
     const rows=log.map(e=>{
       const clr=actionColor[e.action]||'var(--gray-300)';
       const bg=actionBg[e.action]||'rgba(255,255,255,.05)';
@@ -2630,18 +4453,18 @@ function generateReport(){
       const dateStr=dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
       const timeStr=dt.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
       return`<tr>
-        <td><span style="font-size:11px;font-weight:800;padding:3px 9px;border-radius:4px;background:${bg};color:${clr};letter-spacing:.5px;text-transform:uppercase;white-space:nowrap">${e.action}</span></td>
-        <td><span style="font-size:12px;font-weight:700;color:var(--white)">${catIcon[e.category]||'•'} ${e.category}</span></td>
-        <td style="font-size:12px;color:var(--white);font-weight:700;max-width:200px">${e.detail||'—'}</td>
-        <td style="font-size:12px;color:var(--white);font-weight:700;max-width:200px">${e.extra||'—'}</td>
-        <td><div style="font-size:12px;font-weight:700;color:var(--white)">${e.by||'—'} <span style="font-size:9px;font-weight:800;padding:2px 7px;border-radius:4px;background:rgba(255,255,255,.09);color:${roleClr};margin-left:3px;text-transform:uppercase">${e.byRole||''}</span></div></td>
+        <td><span style="font-size:11px;font-weight:800;padding:3px 9px;border-radius:4px;background:${bg};color:${clr};letter-spacing:.5px;text-transform:uppercase;white-space:nowrap">${esc(e.action)}</span></td>
+        <td><span style="font-size:12px;font-weight:700;color:var(--white)">${catIcon[e.category]||'•'} ${esc(e.category)}</span></td>
+        <td style="font-size:12px;color:var(--white);font-weight:700;max-width:200px">${esc(e.detail||'—')}</td>
+        <td style="font-size:12px;color:var(--white);font-weight:700;max-width:200px">${esc(e.extra||'—')}</td>
+        <td><div style="font-size:12px;font-weight:700;color:var(--white)">${esc(e.by||'—')} <span style="font-size:9px;font-weight:800;padding:2px 7px;border-radius:4px;background:rgba(255,255,255,.09);color:${roleClr};margin-left:3px;text-transform:uppercase">${esc(e.byRole||'')}</span></div></td>
         <td style="white-space:nowrap"><div style="font-size:12px;color:var(--white);font-weight:700">${dateStr}</div><div style="font-size:11px;color:var(--gray-300);margin-top:2px">🕐 ${timeStr}</div></td>
       </tr>`;}).join('');
-    output.innerHTML=docHead+`
+    output.innerHTML=`
     <div class="stats-grid">
       <div class="stat-card green"><div class="stat-label">Added</div><div class="stat-value">${totalAdded}</div></div>
       <div class="stat-card gold"><div class="stat-label">Edited</div><div class="stat-value">${totalEdited}</div></div>
-      <div class="stat-card orange" style="border-top-color:#f87171"><div class="stat-label">Deleted</div><div class="stat-value">${totalDeleted}</div></div>
+      <div class="stat-card orange" style="border-top-color:#ef4444"><div class="stat-label">Deleted</div><div class="stat-value">${totalDeleted}</div></div>
       <div class="stat-card blue"><div class="stat-label">Status Changed</div><div class="stat-value">${totalStatus}</div></div>
     </div>
     <div class="table-card">
@@ -2666,12 +4489,12 @@ function generateReport(){
       singleMemberMode=true;
       singleMember=foundInAll||null;
     }
-    if(!filtered.length){output.innerHTML=docHead+`<div class="empty-state"><div class="empty-icon">📊</div><p>No data found for the selected filters. Try adjusting the date range.</p></div>`;return;}
+    if(!filtered.length){output.innerHTML=`<div class="empty-state"><div class="empty-icon">📊</div><p>No data found for the selected filters. Try adjusting the date range.</p></div>`;return;}
     const active=filtered.filter(m=>m.status==='Active'||m.status==='Expiring Soon').length;
     const expired=filtered.filter(m=>m.status==='Expired').length;
     const archivedCount=filtered.filter(m=>m.status==='Archived').length;
     const allUsers=Users.all();
-    const roleColorMap={admin:'var(--orange)',staff:'#aab5ff',trainer:'var(--green)'};
+    const roleColorMap={admin:'var(--orange)',staff:'#d7ddd8',trainer:'var(--green)'};
     const rows=filtered.map(m=>{
       const pl=Plans.all().find(p=>p.id===m.planId);
       const badgeCls={Active:'badge-active',Expired:'badge-expired','Expiring Soon':'badge-expiring',Suspended:'badge-suspended',Archived:'badge-archived'}[m.status]||'';
@@ -2680,33 +4503,33 @@ function generateReport(){
       const createdByUser=m.createdBy?allUsers.find(u=>u.name===m.createdBy||u.username===m.createdByUsername):null;
       const cRoleColor=createdByUser?roleColorMap[createdByUser.role]||'var(--gray-300)':'var(--gray-300)';
       const cRoleTag=createdByUser?`<span style="font-size:9px;font-weight:800;padding:2px 5px;border-radius:4px;background:rgba(255,255,255,.07);color:${cRoleColor};margin-left:4px;text-transform:uppercase">${createdByUser.role}</span>`:'';
-      const createdLine=m.createdBy?`<div style="font-size:12px;font-weight:600">${m.createdBy}${cRoleTag}</div>`:`<span style="color:var(--gray-500)">—</span>`;
+      const createdLine=m.createdBy?`<div style="font-size:12px;font-weight:600">${esc(m.createdBy)}${cRoleTag}</div>`:`<span style="color:var(--gray-500)">—</span>`;
       // Edited By
       const editedByUser=m.editedBy?allUsers.find(u=>u.name===m.editedBy||u.username===m.editedByUsername):null;
       const eRoleColor=editedByUser?roleColorMap[editedByUser.role]||'var(--gray-300)':'var(--gray-300)';
       const eRoleTag=editedByUser?`<span style="font-size:9px;font-weight:800;padding:2px 5px;border-radius:4px;background:rgba(255,255,255,.07);color:${eRoleColor};margin-left:4px;text-transform:uppercase">${editedByUser.role}</span>`:'';
-      const editedLine=m.editedBy?`<div style="font-size:11px;color:var(--gray-500);margin-top:2px">✎ ${m.editedBy}${eRoleTag}</div>`:'';
-      const isArchived=m.status==='Archived';const rowStyle=isArchived?'opacity:0.6;background:rgba(248,113,113,.03);':'';
-      return`<tr style="${rowStyle}"><td style="${isArchived?'text-decoration:line-through;color:var(--gray-500)':''}">${m.id}</td><td><div style="display:flex;align-items:center;gap:6px">${isArchived?'🗑️':''}<span style="${isArchived?'text-decoration:line-through;color:var(--gray-500)':''}">${m.name}</span></div></td><td>${pl?pl.name:'—'}</td><td>${formatDate(m.startDate)}</td><td>${formatDate(m.expiryDate)}</td><td><span class="badge ${badgeCls}">${isArchived?'Deleted':m.status}</span></td><td style="text-align:center"><span style="background:rgba(114,133,255,.12);color:var(--orange);font-size:13px;font-weight:800;padding:3px 10px;border-radius:6px;border:1px solid rgba(114,133,255,.25)">${payCount}x</span></td><td><div>${createdLine}${editedLine}</div></td></tr>`;
+      const editedLine=m.editedBy?`<div style="font-size:11px;color:var(--gray-500);margin-top:2px">✎ ${esc(m.editedBy)}${eRoleTag}</div>`:'';
+      const isArchived=m.status==='Archived';const rowStyle=isArchived?'opacity:0.6;background:rgba(239,68,68,.03);':'';
+      return`<tr style="${rowStyle}"><td style="${isArchived?'text-decoration:line-through;color:var(--gray-500)':''}">${esc(m.id)}</td><td><div style="display:flex;align-items:center;gap:6px">${isArchived?'🗑️':''}<span style="${isArchived?'text-decoration:line-through;color:var(--gray-500)':''}">${esc(m.name)}</span></div></td><td>${esc(pl?pl.name:'—')}</td><td>${formatDate(m.startDate)}</td><td>${formatDate(m.expiryDate)}</td><td><span class="badge ${badgeCls}">${esc(isArchived?'Deleted':m.status)}</span></td><td style="text-align:center"><span style="background:rgba(179,188,181,.12);color:var(--orange);font-size:13px;font-weight:800;padding:3px 10px;border-radius:6px;border:1px solid rgba(179,188,181,.25)">${payCount}x</span></td><td><div>${createdLine}${editedLine}</div></td></tr>`;
     }).join('');
     // If single member, show their payment history too
     let payHistorySection='';
     if(singleMemberMode&&singleMember){
       const memberPayments=allPayments.filter(p=>p.memberId===singleMember.id).slice().reverse();
       const totalPaid=memberPayments.reduce((a,p)=>a+Number(p.amount),0);
-      const payRows=memberPayments.length?memberPayments.map(p=>`<tr><td>${p.id}</td><td>${p.planName}</td><td style="color:var(--green);font-weight:700">₱${Number(p.amount).toLocaleString()}</td><td>${formatDate(p.date)}</td><td>${formatDate(p.newExpiry)}</td><td>${p.method||'—'}</td><td>${p.recordedBy||'—'}</td></tr>`).join(''):`<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">💳</div><p>No payments found</p></div></td></tr>`;
+      const payRows=memberPayments.length?memberPayments.map(p=>`<tr><td>${esc(p.id)}</td><td>${esc(p.planName)}</td><td style="color:var(--green);font-weight:700">₱${Number(p.amount).toLocaleString()}</td><td>${formatDate(p.date)}</td><td>${formatDate(p.newExpiry)}</td><td>${esc(p.method||'—')}</td><td>${esc(p.recordedBy||'—')}</td></tr>`).join(''):`<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">💳</div><p>No payments found</p></div></td></tr>`;
       payHistorySection=`
       <div class="table-card" style="margin-top:16px">
-        <div class="table-header"><h3>💳 Payment History — ${singleMember.name}</h3><span style="font-size:12px;color:var(--gray-500);font-weight:400">${memberPayments.length} payment${memberPayments.length!==1?'s':''} · Total: <span style="color:var(--green);font-weight:700">₱${totalPaid.toLocaleString()}</span></span></div>
+        <div class="table-header"><h3>💳 Payment History — ${esc(singleMember.name)}</h3><span style="font-size:12px;color:var(--gray-500);font-weight:400">${memberPayments.length} payment${memberPayments.length!==1?'s':''} · Total: <span style="color:var(--green);font-weight:700">₱${totalPaid.toLocaleString()}</span></span></div>
         <div style="overflow-x:auto"><table><thead><tr><th>Pay ID</th><th>Plan</th><th>Amount</th><th>Date</th><th>New Expiry</th><th>Method</th><th>Recorded By</th></tr></thead><tbody>${payRows}</tbody></table></div>
       </div>`;
     }
-    output.innerHTML=docHead+`
+    output.innerHTML=`
     <div class="stats-grid">
       <div class="stat-card orange"><div class="stat-label">Total Members</div><div class="stat-value">${filtered.length}</div></div>
       <div class="stat-card green"><div class="stat-label">Active</div><div class="stat-value">${active}</div></div>
       <div class="stat-card gold"><div class="stat-label">Expired</div><div class="stat-value">${expired}</div></div>
-      ${archivedCount>0?`<div class="stat-card" style="border-top-color:#fb8a8a"><div class="stat-label" style="color:#fb8a8a">🗑️ Deleted</div><div class="stat-value" style="color:#fb8a8a">${archivedCount}</div><div class="stat-hint">removed members</div></div>`:''}
+      ${archivedCount>0?`<div class="stat-card" style="border-top-color:#fca5a5"><div class="stat-label" style="color:#fca5a5">🗑️ Deleted</div><div class="stat-value" style="color:#fca5a5">${archivedCount}</div><div class="stat-hint">removed members</div></div>`:''}
       ${singleMemberMode&&singleMember?`<div class="stat-card blue"><div class="stat-label">Total Payments</div><div class="stat-value">${allPayments.filter(p=>p.memberId===singleMember.id).length}x</div><div class="stat-hint">membership renewals</div></div>`:''}
     </div>
     <div class="table-card">
@@ -2721,7 +4544,7 @@ function filterTrainerReportList(val){
   const all=Users.all().filter(u=>u.role==='trainer');
   const filtered=val?all.filter(u=>u.name.toLowerCase().includes(val.toLowerCase())):all;
   drop.style.display=filtered.length?'block':'none';
-  drop.innerHTML=filtered.map(u=>`<div class="country-item" onclick="selectTrainerReport('${u.id}','${u.name.replace(/'/g,"\\'")}')"><span>${u.name}</span></div>`).join('');
+  drop.innerHTML=filtered.map(u=>`<div class="country-item" onclick="selectTrainerReport('${u.id}','${esc(u.name).replace(/'/g,"&#39;")}')"><span>${esc(u.name)}</span></div>`).join('');
   if(!val){document.getElementById('rpt_trainer_filter').value='all';}
 }
 function selectTrainerReport(id,name){
@@ -2743,12 +4566,12 @@ function filterMemberReportList(val){
   const deleted=filtered.filter(m=>m.status==='Archived');
   let html='';
   if(active.length){
-    html+=`<div style="padding:6px 12px 4px;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:var(--green);background:rgba(52,211,153,.05);border-bottom:1px solid rgba(52,211,153,.12)">✓ Active Members</div>`;
-    html+=active.map(m=>`<div class="country-item" style="padding:9px 14px" onclick="selectMemberReport('${m.id}','${m.name.replace(/'/g,"\\'")}')"><span style="font-weight:600">${m.name}</span></div>`).join('');
+    html+=`<div style="padding:6px 12px 4px;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:var(--green);background:rgba(127,250,136,.05);border-bottom:1px solid rgba(127,250,136,.12)">✓ Active Members</div>`;
+html+=active.map(m=>`<div class="country-item" style="padding:9px 14px" onclick="selectMemberReport('${m.id}','${esc(m.name).replace(/'/g,"&#39;")}')"><span style="font-weight:600">${esc(m.name)}</span></div>`).join('');
   }
   if(deleted.length){
-    html+=`<div style="padding:6px 12px 4px;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:#fb8a8a;background:rgba(248,113,113,.05);border-top:1px solid rgba(248,113,113,.15);border-bottom:1px solid rgba(248,113,113,.1)">⚠ Deleted Members</div>`;
-    html+=deleted.map(m=>`<div class="country-item" style="padding:9px 14px;opacity:.75" onclick="selectMemberReport('${m.id}','${m.name.replace(/'/g,"\\'")}')"><span style="font-weight:600;color:var(--gray-300)">${m.name}</span><span style="margin-left:8px;font-size:9px;font-weight:800;color:#fb8a8a;background:rgba(248,113,113,.15);border:1px solid rgba(248,113,113,.25);border-radius:4px;padding:1px 6px">DELETED</span></div>`).join('');
+    html+=`<div style="padding:6px 12px 4px;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:#fca5a5;background:rgba(239,68,68,.05);border-top:1px solid rgba(239,68,68,.15);border-bottom:1px solid rgba(239,68,68,.1)">⚠ Deleted Members</div>`;
+html+=deleted.map(m=>`<div class="country-item" style="padding:9px 14px;opacity:.75" onclick="selectMemberReport('${m.id}','${esc(m.name).replace(/'/g,"&#39;")}')"><span style="font-weight:600;color:var(--gray-300)">${esc(m.name)}</span><span style="margin-left:8px;font-size:9px;font-weight:800;color:#fca5a5;background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.25);border-radius:4px;padding:1px 6px">DELETED</span></div>`).join('');
   }
   drop.innerHTML=html;
   drop.style.display='block';
@@ -2778,35 +4601,35 @@ function printReport(){
   const win=window.open('','_blank','width=900,height=700');
   win.document.write(`<!DOCTYPE html><html><head><title>FitCore GMS — Report</title>
   <style>
-  :root{--orange:#f4913f;--orange-dark:#d1621f;--gold:#fbbf24;--green:#16a34a;--gray-300:#94a3b8;--gray-500:#64748b;--navy-900:#0d1117;--cyan:#0891b2}
+  :root{--orange:#7ffa88;--orange-dark:#4ade80;--gold:#fbbf24;--green:#4ade80;--gray-300:#b3bcb5;--gray-500:#5e625f;--navy-900:#0a0a0a;--cyan:#b3bcb5}
   *{box-sizing:border-box}
-  body{font-family:'Segoe UI',Roboto,Arial,sans-serif;color:#0d1117;padding:0;margin:0;font-size:12.5px;background:#fff}
+  body{font-family:'Segoe UI',Roboto,Arial,sans-serif;color:#0a0a0a;padding:0;margin:0;font-size:12.5px;background:#fff}
   .page{max-width:920px;margin:0 auto;padding:28px 32px}
-  .print-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:14px;border-bottom:3px solid #f4913f;margin-bottom:18px}
+  .print-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:14px;border-bottom:3px solid #7ffa88;margin-bottom:18px}
   .ph-brand{display:flex;align-items:center;gap:10px}
-  .ph-logo{width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,#f4913f,#d1621f);color:#fff;font-family:Impact,'Arial Black',sans-serif;font-size:21px;font-weight:900;display:flex;align-items:center;justify-content:center}
-  .ph-name{font-family:Impact,'Arial Black',sans-serif;font-size:17px;font-weight:900;letter-spacing:2px;text-transform:uppercase;color:#0d1117;line-height:1.1}
-  .ph-name em{font-style:normal;color:#f4913f}
-  .ph-tag{font-size:8.5px;font-weight:800;text-transform:uppercase;letter-spacing:2px;color:#64748b;margin-top:2px}
-  .ph-meta{text-align:right;font-size:10.5px;color:#64748b;line-height:1.6}
-  .ph-meta strong{color:#0d1117}
+  .ph-logo{width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,#7ffa88,#4ade80);color:#fff;font-family:Impact,'Arial Black',sans-serif;font-size:21px;font-weight:900;display:flex;align-items:center;justify-content:center}
+  .ph-name{font-family:Impact,'Arial Black',sans-serif;font-size:17px;font-weight:900;letter-spacing:2px;text-transform:uppercase;color:#0a0a0a;line-height:1.1}
+  .ph-name em{font-style:normal;color:#7ffa88}
+  .ph-tag{font-size:8.5px;font-weight:800;text-transform:uppercase;letter-spacing:2px;color:#5e625f;margin-top:2px}
+  .ph-meta{text-align:right;font-size:10.5px;color:#5e625f;line-height:1.6}
+  .ph-meta strong{color:#0a0a0a}
   .stats-grid{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap}
-  .stat-card{border:1px solid #e6ebf4;border-radius:12px;padding:12px 16px;min-width:130px;border-top:3px solid #f4913f}
-  .stat-card.green{border-top-color:#16a34a}
+  .stat-card{border:1px solid #e6ebf4;border-radius:12px;padding:12px 16px;min-width:130px;border-top:3px solid #7ffa88}
+  .stat-card.green{border-top-color:#4ade80}
   .stat-card.gold{border-top-color:#fbbf24}
   .stat-card.blue{border-top-color:#0ea5e9}
-  .stat-label{font-size:9px;font-weight:800;text-transform:uppercase;color:#64748b;margin-bottom:4px;letter-spacing:1px}
-  .stat-value{font-size:23px;font-weight:900;color:#0d1117;font-family:Impact,'Arial Black',sans-serif}
-  .stat-hint{font-size:10px;color:#64748b;margin-top:3px}
+  .stat-label{font-size:9px;font-weight:800;text-transform:uppercase;color:#5e625f;margin-bottom:4px;letter-spacing:1px}
+  .stat-value{font-size:23px;font-weight:900;color:#0a0a0a;font-family:Impact,'Arial Black',sans-serif}
+  .stat-hint{font-size:10px;color:#5e625f;margin-top:3px}
   .chart-card{border:1px solid #e6ebf4;border-radius:12px;padding:14px 16px;margin-bottom:16px}
-  .chart-title{font-size:9px;font-weight:800;text-transform:uppercase;color:#64748b;margin-bottom:10px;letter-spacing:1.5px}
+  .chart-title{font-size:9px;font-weight:800;text-transform:uppercase;color:#5e625f;margin-bottom:10px;letter-spacing:1.5px}
   .chart-card svg{width:100%}
   .table-card{border:1px solid #e6ebf4;border-radius:12px;overflow:hidden;margin-bottom:14px}
   .table-header{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 16px;background:#f6f8fc;border-bottom:1px solid #e6ebf4}
-  .table-header h3{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:#0d1117;margin:0}
+  .table-header h3{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:#0a0a0a;margin:0}
   .table-header .btn-secondary,.table-header button{display:none}
   table{width:100%;border-collapse:collapse;font-size:11.5px}
-  thead th{background:#0d1117;color:#fff;padding:8px 10px;text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.5px}
+  thead th{background:#0a0a0a;color:#fff;padding:8px 10px;text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.5px}
   tbody td{padding:7px 10px;border-bottom:1px solid #eef1f6;vertical-align:middle}
   tbody tr:nth-child(even){background:#fafbfd}
   .badge{display:inline-block;padding:2px 8px;border-radius:100px;font-size:9.5px;font-weight:800;text-transform:uppercase}
@@ -2817,9 +4640,9 @@ function printReport(){
   .badge-suspended{background:#fecaca;color:#991b1b}
   .badge-archived{background:#e2e8f0;color:#475569}
   .report-doc-head{display:none}
-  .empty-state{text-align:center;padding:36px 16px;color:#64748b;font-size:12px}
-  .print-foot{margin-top:18px;padding-top:12px;border-top:1px solid #e6ebf4;display:flex;justify-content:space-between;gap:12px;font-size:10px;color:#64748b}
-  .print-foot strong{color:#0d1117}
+  .empty-state{text-align:center;padding:36px 16px;color:#5e625f;font-size:12px}
+  .print-foot{margin-top:18px;padding-top:12px;border-top:1px solid #e6ebf4;display:flex;justify-content:space-between;gap:12px;font-size:10px;color:#5e625f}
+  .print-foot strong{color:#0a0a0a}
   @media print{button{display:none}thead th{-webkit-print-color-adjust:exact;print-color-adjust:exact}tbody tr:nth-child(even){-webkit-print-color-adjust:exact;print-color-adjust:exact}}
   </style></head><body><div class="page">
   <div class="print-header">
@@ -2827,7 +4650,7 @@ function printReport(){
       <div class="ph-logo">F</div>
       <div><div class="ph-name">FITCORE <em>GMS</em></div><div class="ph-tag">Gym Management System</div></div>
     </div>
-    <div class="ph-meta"><strong>Generated</strong>: ${new Date().toLocaleString()}<br><strong>By</strong>: ${currentUser.name} (${currentUser.role})</div>
+    <div class="ph-meta"><strong>Generated</strong>: ${new Date().toLocaleString()}<br><strong>By</strong>: ${esc(currentUser.name)} (${esc(currentUser.role)})</div>
   </div>
   ${output.innerHTML}
   <div class="print-foot">
@@ -2840,18 +4663,25 @@ function printReport(){
 </html>`);
   win.document.close();
 }
+// Neutralize spreadsheet formula injection: cells starting with = + - @ (or tab/CR) get a
+// leading apostrophe so Excel/Sheets treat them as text, not formulas.
+function csvCell(v){
+  const s=String(v==null?'':v);
+  const guarded=/^[=+\-@\t\r]/.test(s)?'\''+s:s;
+  return '"'+guarded.replace(/"/g,'""')+'"';
+}
 function exportCSV(type){
   let csv='';let filename='';
   if(type==='revenue'){
     const data=Payments.all();
     const walkins=Walkins.all();
     csv='ID,Name,Plan/Type,Amount,Date,Method,Category\n'
-      +data.map(p=>`${p.id},"${p.memberName}","${p.planName}",${p.amount},${p.date},${p.method},Membership`).join('\n')
-      +'\n'+walkins.map(w=>`${w.id},"${w.visitorName}",Walk-In,${w.fee},${w.date},Cash,Walk-In`).join('\n');
+      +data.map(p=>`${csvCell(p.id)},${csvCell(p.memberName)},${csvCell(p.planName)},${p.amount},${p.date},${csvCell(p.method)},Membership`).join('\n')
+      +'\n'+walkins.map(w=>`${csvCell(w.id)},${csvCell(w.visitorName)},Walk-In,${w.fee},${w.date},Cash,Walk-In`).join('\n');
     filename='revenue_report.csv';
   } else if(type==='attendance'){
     const data=Attendance.all();
-    csv='Date,Check-In,Check-Out,Duration,Member ID,Recorded By\n'+data.map(a=>`${a.date},${a.checkIn||a.time||''},${a.checkOut||''},${a.duration||''},${a.memberId},${a.recordedBy||''}`).join('\n');
+    csv='Date,Check-In,Check-Out,Duration,Member ID,Recorded By\n'+data.map(a=>`${a.date},${csvCell(a.checkIn||a.time||'')},${csvCell(a.checkOut||'')},${csvCell(a.duration||'')},${csvCell(a.memberId)},${csvCell(a.recordedBy||'')}`).join('\n');
     filename='attendance_report.csv';
   } else if(type==='trainer'){
     const sessions=Sessions.all();
@@ -2861,12 +4691,12 @@ function exportCSV(type){
       const trainer=users.find(u=>u.id===s.trainerId);
       const member=members.find(m=>m.id===s.memberId);
       const time=s.time||(s.startTime?s.startTime+(s.endTime?' - '+s.endTime:''):'');
-      return `${s.date},"${trainer?trainer.name:''}","${time}","${s.type||s.sessionType||''}","${member?member.name:(s.memberName||'')}",${s.status},"${s.createdBy||''}","${s.editedBy||''}","${s.notes||''}"`;
+      return `${s.date},${csvCell(trainer?trainer.name:'')},${csvCell(time)},${csvCell(s.type||s.sessionType||'')},${csvCell(member?member.name:(s.memberName||''))},${csvCell(s.status)},${csvCell(s.createdBy||'')},${csvCell(s.editedBy||'')},${csvCell(s.notes||'')}`;
     }).join('\n');
     filename='trainer_schedule_report.csv';
   } else {
     const data=Members.all().filter(m=>m.status!=='Archived');
-    csv='ID,Name,Plan ID,Start Date,Expiry Date,Status,Created By,Edited By\n'+data.map(m=>`${m.id},"${m.name}",${m.planId||''},${m.startDate},${m.expiryDate},${m.status},"${m.createdBy||''}","${m.editedBy||''}"`).join('\n');
+    csv='ID,Name,Plan ID,Start Date,Expiry Date,Status,Created By,Edited By\n'+data.map(m=>`${csvCell(m.id)},${csvCell(m.name)},${csvCell(m.planId||'')},${m.startDate},${m.expiryDate},${csvCell(m.status)},${csvCell(m.createdBy||'')},${csvCell(m.editedBy||'')}`).join('\n');
     filename='membership_report.csv';
   }
   const blob=new Blob([csv],{type:'text/csv'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;a.click();URL.revokeObjectURL(url);
@@ -2877,11 +4707,21 @@ function exportCSV(type){
 // PANEL: USER MANAGEMENT
 // ======================================================================
 let userSearch='';
+let userRoleTab='staff';
 function renderUsers(){
   const el=document.getElementById('panelUsers');
+  const counts={admin:0,staff:0,trainer:0};
+  Users.all().forEach(u=>{if(counts[u.role]!==undefined)counts[u.role]++;});
+  const tab=(role,label)=>`<button class="rtab ${userRoleTab===role?'active':''}" onclick="userRoleTab='${role}';renderUsers()">${label} <span class="user-tab-count">(${counts[role]})</span></button>`;
+  const searchPh={admin:'Admins',staff:'Staff',trainer:'Trainers'}[userRoleTab]||'users';
   el.innerHTML=`
+  <div class="report-tabs">
+    ${tab('admin','Admins')}
+    ${tab('staff','Staff')}
+    ${tab('trainer','Trainers')}
+  </div>
   <div class="page-actions">
-    <input class="search-input" placeholder="Search users…" value="${userSearch}" oninput="userSearch=this.value;refreshUserTable()">
+    <input class="search-input" placeholder="Search ${searchPh}…" value="${esc(userSearch)}" oninput="userSearch=this.value;refreshUserTable()">
     <button class="btn-primary" onclick="openUserModal()">+ Add User</button>
   </div>
   <div class="table-card" id="userTableCard"></div>`;
@@ -2889,29 +4729,31 @@ function renderUsers(){
   updatePendingBadge();
 }
 function refreshUserTable(){
-  let data=Users.all();
+  const label={admin:'Admins',staff:'Staff',trainer:'Trainers'}[userRoleTab]||'Users';
+  const singular={admin:'admin',staff:'staff',trainer:'trainer'}[userRoleTab]||'user';
+  let data=Users.all().filter(u=>u.role===userRoleTab);
   if(userSearch){const s=userSearch.toLowerCase();data=data.filter(u=>u.name.toLowerCase().includes(s)||u.username.toLowerCase().includes(s));}
   const rows=data.length?data.map(u=>{
     const roleCls={admin:'badge-admin',staff:'badge-staff',trainer:'badge-trainer'}[u.role]||'';
     const statusCls=u.status==='locked'?'badge-locked':u.status==='pending'?'badge-pending':'badge-active';
     const statusLabel=u.status==='locked'?'Locked':u.status==='pending'?'Pending':'Active';
-    const trainerExtra=u.role==='trainer'&&u.specializations?`<div style="font-size:10px;color:var(--orange);margin-top:2px">🏋️ ${Array.isArray(u.specializations)?u.specializations.slice(0,2).join(', ')+(u.specializations.length>2?' +more':''):''}</div>`:'';
-    const trainerHours=u.role==='trainer'&&u.availableFrom?`<div style="font-size:10px;color:var(--gray-500);margin-top:1px">⏰ ${u.availableFrom}–${u.availableTo||''}</div>`:'';
+    const trainerExtra=u.role==='trainer'&&u.specializations?`<div style="font-size:10px;color:var(--orange);margin-top:2px">🏋️ ${Array.isArray(u.specializations)?u.specializations.slice(0,2).map(esc).join(', ')+(u.specializations.length>2?' +more':''):''}</div>`:'';
+    const trainerHours=u.role==='trainer'&&u.availableFrom?`<div style="font-size:10px;color:var(--gray-500);margin-top:1px">⏰ ${esc(u.availableFrom)}–${esc(u.availableTo||'')}</div>`:'';
     return`<tr>
-      <td><div style="display:flex;align-items:center;gap:8px"><div class="user-avatar avatar-${u.role}" style="width:28px;height:28px;font-size:10px">${initials(u.name)}</div><div><div>${u.name}${u.coachName&&u.coachName!==u.name?` <span style="font-size:10px;color:var(--gray-500)">(${u.coachName})</span>`:''}</div><div style="font-size:11px;color:var(--gray-500);font-family:monospace;margin-top:2px">${u.contact||'—'}</div>${trainerExtra}${trainerHours}</div></div></td>
-      <td>${u.username}</td>
-      <td><span class="badge ${roleCls}">${u.role}</span></td>
+      <td><div style="display:flex;align-items:center;gap:8px"><div class="user-avatar avatar-${u.role}" style="width:28px;height:28px;font-size:10px;${u.avatar?'background:url(\''+u.avatar+'\') center/cover;background-size:cover;':''}">${u.avatar?'':esc(initials(u.name))}</div><div><div>${esc(u.name)}${u.coachName&&u.coachName!==u.name?` <span style="font-size:10px;color:var(--gray-500)">(${esc(u.coachName)})</span>`:''}</div><div style="font-size:11px;color:var(--gray-500);font-family:monospace;margin-top:2px">${esc(u.contact||'—')}</div>${trainerExtra}${trainerHours}</div></div></td>
+      <td>${esc(u.username)}</td>
+      <td><span class="badge ${roleCls}">${esc(u.role)}</span></td>
       <td>${formatDate(u.createdAt||today())}</td>
       <td><span class="badge ${statusCls}">${statusLabel}</span></td>
       <td><div class="td-actions">
         <button class="btn-icon" title="View" onclick="viewUser('${u.id}')">👤</button>
         <button class="btn-icon" title="Edit" onclick="openUserModal('${u.id}')">✎</button>
         ${u.status==='pending'?`<button class="btn-icon" title="Approve" style="color:var(--green)" onclick="approveUser('${u.id}')">✔</button>`:`<button class="btn-icon" title="${u.status==='locked'?'Unlock':'Lock'}" onclick="toggleUserLock('${u.id}')">${u.status==='locked'?'○':'●'}</button>`}
-        ${u.id===currentUser.id?`<button class="btn-icon" title="Cannot delete your own account" style="opacity:.3;cursor:not-allowed;color:var(--gray-500);border-color:rgba(255,255,255,.08)" disabled>✕</button>`:`<button class="btn-icon" title="Delete User" style="color:var(--red);border-color:rgba(248,113,113,.25);background:rgba(248,113,113,.08)" onmouseover="this.style.background='var(--red)';this.style.color='#fff'" onmouseout="this.style.background='rgba(248,113,113,.08)';this.style.color='var(--red)'" onclick="deleteUser('${u.id}')">✕</button>`}
+        ${u.id===currentUser.id?`<button class="btn-icon" title="Cannot delete your own account" style="opacity:.3;cursor:not-allowed;color:var(--gray-500);border-color:rgba(255,255,255,.08)" disabled>✕</button>`:`<button class="btn-icon" title="Delete User" style="color:var(--red);border-color:rgba(239,68,68,.25);background:rgba(239,68,68,.08)" onmouseover="this.style.background='var(--red)';this.style.color='#fff'" onmouseout="this.style.background='rgba(239,68,68,.08)';this.style.color='var(--red)'" onclick="deleteUser('${u.id}')">✕</button>`}
       </div></td>
-    </tr>`;}).join(''):`<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">—</div><p>No users found</p></div></td></tr>`;
+    </tr>`;}).join(''):`<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">—</div><p>No ${singular} found</p></div></td></tr>`;
   document.getElementById('userTableCard').innerHTML=`
-    <div class="table-header"><h3>System Users</h3></div>
+    <div class="table-header"><h3>${label}</h3></div>
     <div style="overflow-x:auto"><table><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Created</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 let editingUserId=null;
@@ -2929,7 +4771,7 @@ function openUserModal(id=null){
     if(roleRow)roleRow.style.display=u.role==='admin'?'none':'block';
   } else {
     ['uf_name','uf_contact','uf_user','uf_pass','uf_pass2'].forEach(id=>document.getElementById(id).value='');
-    document.getElementById('uf_role').value='staff';
+    document.getElementById('uf_role').value=userRoleTab;
     const roleRow=document.getElementById('uf_role_row');
     if(roleRow)roleRow.style.display='block';
   }
@@ -2952,12 +4794,13 @@ function saveUser(){
   if(dup){err.textContent='Username already taken. Please choose a different username.';err.style.display='block';return;}
   if(editingUserId){
     const idx=users.findIndex(u=>u.id===editingUserId);
-    if(idx>-1){users[idx].name=name;users[idx].contact=contact;users[idx].username=username;users[idx].role=role;if(pass)users[idx].password=pass;}
+    if(idx>-1){users[idx].name=name;users[idx].contact=contact;users[idx].username=username;users[idx].role=role;if(pass){users[idx].passwordHash=hashPassword(pass);delete users[idx].password;}}
     Users.save(users);toast('User updated.');
   } else {
-    users.push({id:uid(),name,contact,username,password:pass,role,status:'active',createdAt:today()});
+    users.push({id:uid(),name,contact,username,passwordHash:hashPassword(pass),role,status:'active',createdAt:today()});
     Users.save(users);toast('User created.');
   }
+  userRoleTab=role;
   closeModal('userModal');renderUsers();
 }
 function toggleUserLock(id){
@@ -2976,9 +4819,9 @@ function approveUser(id){
 let _upPassVisible=false;let _upPassVal='';
 function viewUser(id){
   const u=Users.one(id);if(!u)return;
-  _upPassVisible=false;_upPassVal=u.password||'';
+  _upPassVisible=false;_upPassVal=u.passwordHash||'';
   const roleMap={admin:'Admin',staff:'Staff',trainer:'Trainer'};
-  const roleColors={admin:'var(--orange)',staff:'#aab5ff',trainer:'var(--green)'};
+  const roleColors={admin:'var(--orange)',staff:'#d7ddd8',trainer:'var(--green)'};
   const avatarCls={admin:'avatar-admin',staff:'avatar-staff',trainer:'avatar-trainer'}[u.role]||'avatar-staff';
   const tag=roleMap[u.role]||u.role;
   const col=roleColors[u.role]||'var(--gray-300)';
@@ -3007,14 +4850,14 @@ function viewUser(id){
     const hours=(u.availableFrom&&u.availableTo)?`${u.availableFrom} – ${u.availableTo}`:'—';
     trainerSection.style.display='block';
     trainerSection.innerHTML=`
-      <div style="margin:12px 0;border-top:1px solid rgba(114,133,255,.2);padding-top:12px">
+      <div style="margin:12px 0;border-top:1px solid rgba(179,188,181,.2);padding-top:12px">
         <div style="font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:2px;color:var(--orange);margin-bottom:10px">🏋️ Trainer Profile</div>
         <div style="font-size:12px;line-height:2;color:var(--gray-300)">
-          <div><span style="color:var(--gray-500);width:110px;display:inline-block">Coach Name:</span><strong style="color:var(--white)">${u.coachName||'—'}</strong></div>
-          <div><span style="color:var(--gray-500);width:110px;display:inline-block">Best For:</span><strong style="color:var(--white)">${specs}</strong></div>
-          <div><span style="color:var(--gray-500);width:110px;display:inline-block">Days:</span><strong style="color:var(--white)">${days}</strong></div>
-          <div><span style="color:var(--gray-500);width:110px;display:inline-block">Hours:</span><strong style="color:var(--orange)">${hours}</strong></div>
-          ${u.bio?`<div style="margin-top:8px;background:rgba(255,255,255,.04);border-radius:7px;padding:9px 12px;font-size:12px;color:var(--gray-300);line-height:1.6;border:1px solid rgba(255,255,255,.07)">${u.bio}</div>`:''}
+          <div><span style="color:var(--gray-500);width:110px;display:inline-block">Coach Name:</span><strong style="color:var(--white)">${esc(u.coachName||'—')}</strong></div>
+          <div><span style="color:var(--gray-500);width:110px;display:inline-block">Best For:</span><strong style="color:var(--white)">${esc(specs)}</strong></div>
+          <div><span style="color:var(--gray-500);width:110px;display:inline-block">Days:</span><strong style="color:var(--white)">${esc(days)}</strong></div>
+          <div><span style="color:var(--gray-500);width:110px;display:inline-block">Hours:</span><strong style="color:var(--orange)">${esc(hours)}</strong></div>
+          ${u.bio?`<div style="margin-top:8px;background:rgba(255,255,255,.04);border-radius:7px;padding:9px 12px;font-size:12px;color:var(--gray-300);line-height:1.6;border:1px solid rgba(255,255,255,.07)">${esc(u.bio)}</div>`:''}
         </div>
       </div>`;
   } else {
@@ -3030,18 +4873,18 @@ function toggleUpPass(){
 function deleteUser(id){
   if(id===currentUser.id){toast('You cannot delete your own account.','error');return;}
   const u=Users.one(id);
-  const roleColors={admin:'var(--orange)',staff:'#aab5ff',trainer:'var(--green)'};
+  const roleColors={admin:'var(--orange)',staff:'#d7ddd8',trainer:'var(--green)'};
   const roleColor=u?roleColors[u.role]||'var(--gray-300)':'var(--gray-300)';
   const detail=u?`<div style="margin-top:10px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:12px 14px;font-size:12px;line-height:1.8">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.06)">
-      <div class="user-avatar avatar-${u.role}" style="width:36px;height:36px;font-size:12px;font-weight:800;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0">${initials(u.name)}</div>
-      <div><div style="font-weight:700;color:var(--white);font-size:13px">${u.name}</div><div style="color:var(--gray-500);font-size:11px;font-family:monospace">@${u.username}</div></div>
-      <span style="margin-left:auto;font-size:9px;font-weight:800;padding:3px 8px;border-radius:4px;background:rgba(255,255,255,.07);color:${roleColor};text-transform:uppercase">${u.role}</span>
+      <div class="user-avatar avatar-${u.role}" style="width:36px;height:36px;font-size:12px;font-weight:800;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;${u.avatar?'background:url(\''+u.avatar+'\') center/cover;background-size:cover;':''}">${u.avatar?'':initials(u.name)}</div>
+      <div><div style="font-weight:700;color:var(--white);font-size:13px">${esc(u.name)}</div><div style="color:var(--gray-500);font-size:11px;font-family:monospace">@${esc(u.username)}</div></div>
+      <span style="margin-left:auto;font-size:9px;font-weight:800;padding:3px 8px;border-radius:4px;background:rgba(255,255,255,.07);color:${roleColor};text-transform:uppercase">${esc(u.role)}</span>
     </div>
-    <div><span style="color:var(--gray-500);width:80px;display:inline-block">Contact:</span> <strong style="color:var(--white)">${u.contact||'—'}</strong></div>
+    <div><span style="color:var(--gray-500);width:80px;display:inline-block">Contact:</span> <strong style="color:var(--white)">${esc(u.contact||'—')}</strong></div>
     <div><span style="color:var(--gray-500);width:80px;display:inline-block">Status:</span> <strong style="color:${u.status==='locked'?'var(--red)':'var(--green)'}">${u.status==='locked'?'Locked':'Active'}</strong></div>
     <div><span style="color:var(--gray-500);width:80px;display:inline-block">Created:</span> <strong style="color:var(--white)">${formatDate(u.createdAt||today())}</strong></div>
-  </div><div style="margin-top:10px;font-size:11px;color:var(--red);background:rgba(248,113,113,.06);border:1px solid rgba(248,113,113,.15);border-radius:6px;padding:8px 12px">⚠ This will permanently remove the user and cannot be undone.</div>`:'';
+  </div><div style="margin-top:10px;font-size:11px;color:var(--red);background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.15);border-radius:6px;padding:8px 12px">⚠ This will permanently remove the user and cannot be undone.</div>`:'';
   openConfirm('Delete User',`Are you sure you want to delete this user?${detail}`,()=>{
     const users=Users.all().filter(x=>x.id!==id);Users.save(users);toast('User deleted.');renderUsers();updatePendingBadge();
   });
@@ -3071,10 +4914,10 @@ function filterCheckinList(val){
   const matches=_ciMembers.filter(m=>m.name.toLowerCase().includes(q)||m.id.toLowerCase().includes(q)).slice(0,10);
   if(!matches.length){list.innerHTML='<div style="padding:10px 14px;color:var(--gray-500);font-size:13px">No members found</div>';list.style.display='block';return;}
   list.innerHTML=matches.map(m=>`<div style="padding:9px 14px;cursor:pointer;font-size:13px;border-bottom:1px solid rgba(255,255,255,.05);display:flex;justify-content:space-between;align-items:center"
-    onmousedown="selectCheckinMember('${m.id}','${m.name.replace(/'/g,"\\'")}','${m.status}')"
-    onmouseover="this.style.background='rgba(52,211,153,.08)'" onmouseout="this.style.background=''">
-    <span>${m.name}</span>
-    <span style="font-size:10px;color:var(--gray-500)">${m.id}</span>
+    onmousedown="selectCheckinMember('${m.id}','${esc(m.name).replace(/'/g,"&#39;")}','${m.status}')"
+    onmouseover="this.style.background='rgba(127,250,136,.08)'" onmouseout="this.style.background=''">
+    <span>${esc(m.name)}</span>
+    <span style="font-size:10px;color:var(--gray-500)">${esc(m.id)}</span>
   </div>`).join('');
   list.style.display='block';
 }
@@ -3083,7 +4926,7 @@ function selectCheckinMember(id,name,status){
   document.getElementById('ci_search').value=name;
   document.getElementById('ci_list').style.display='none';
   const sel=document.getElementById('ci_selected');
-  sel.innerHTML=`✅ <strong>${name}</strong> <span style="font-size:11px;color:var(--gray-500)">${id}</span>`;
+  sel.innerHTML=`✅ <strong>${esc(name)}</strong> <span style="font-size:11px;color:var(--gray-500)">${esc(id)}</span>`;
   sel.style.display='block';
 }
 function doCheckin(){
@@ -3135,10 +4978,10 @@ function filterCheckoutList(val){
     list.style.display='block';return;
   }
   list.innerHTML=matches.map(a=>`<div style="padding:9px 14px;cursor:pointer;font-size:13px;border-bottom:1px solid rgba(255,255,255,.05);display:flex;justify-content:space-between;align-items:center"
-    onmousedown="selectCheckoutMember('${a.id}','${a.memberName.replace(/'/g,"\\'")}','${a.checkIn}')"
-    onmouseover="this.style.background='rgba(114,133,255,.08)'" onmouseout="this.style.background=''">
-    <span>${a.memberName}</span>
-    <span style="font-size:10px;color:var(--gray-500)">In: ${a.checkIn}</span>
+    onmousedown="selectCheckoutMember('${a.id}','${esc(a.memberName).replace(/'/g,"&#39;")}','${esc(a.checkIn)}')"
+    onmouseover="this.style.background='rgba(179,188,181,.08)'" onmouseout="this.style.background=''">
+    <span>${esc(a.memberName)}</span>
+    <span style="font-size:10px;color:var(--gray-500)">In: ${esc(a.checkIn)}</span>
   </div>`).join('');
   list.style.display='block';
 }
@@ -3147,7 +4990,7 @@ function selectCheckoutMember(attId,name,checkIn){
   document.getElementById('co_search').value=name;
   document.getElementById('co_list').style.display='none';
   const sel=document.getElementById('co_selected');
-  sel.innerHTML='&#x1F6AA; <strong>'+name+'</strong> <span style="font-size:11px;color:var(--gray-500)">Checked in: '+checkIn+'</span>';
+  sel.innerHTML='&#x1F6AA; <strong>'+esc(name)+'</strong> <span style="font-size:11px;color:var(--gray-500)">Checked in: '+esc(checkIn)+'</span>';
   sel.style.display='block';
 }
 
@@ -3333,6 +5176,7 @@ document.addEventListener('click',function(e){
 // rule for any content injected later (table refreshes, dropdowns, toasts).
 (()=>{
   iconize(document);
+  syncStaticWalkinPrice();
   const iconObserver=new MutationObserver(ms=>{
     for(const m of ms){
       if(!m.addedNodes||!m.addedNodes.length)continue;

@@ -5,7 +5,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>FitCore GMS — Gym Management System</title>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%237285ff'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='central' text-anchor='middle' font-family='Arial Black,sans-serif' font-weight='900' font-size='20' fill='white'%3EF%3C/text%3E%3C/svg%3E">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%237ffa88'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='central' text-anchor='middle' font-family='Arial Black,sans-serif' font-weight='900' font-size='20' fill='%230a0a0a'%3EF%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@100;300;400;500;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -33,7 +33,6 @@
       <li><a href="#" class="ln-link" onclick="showLandingSection('features',this);return false">Features</a></li>
       <li><a href="#" class="ln-link" onclick="showLandingSection('explore',this);return false">Plans</a></li>
       <li><a href="#" class="ln-link" onclick="showLandingSection('trainers',this);return false">Trainers</a></li>
-      <li><a href="#" class="ln-link" onclick="showLandingSection('reviews',this);return false">Reviews</a></li>
       <li><a href="#" class="ln-link ln-cta" onclick="showLandingSection('register',this);return false">Log In</a></li>
     </ul>
     <button class="ln-hamburger" id="lnHamburger" onclick="toggleMobileMenu()" aria-label="Toggle menu"><span></span><span></span><span></span></button>
@@ -44,7 +43,6 @@
     <a href="#" class="ln-link" onclick="showLandingSection('features',null);closeMobileMenu();return false">Features</a>
     <a href="#" class="ln-link" onclick="showLandingSection('explore',null);closeMobileMenu();return false">Plans</a>
     <a href="#" class="ln-link" onclick="showLandingSection('trainers',null);closeMobileMenu();return false">Trainers</a>
-    <a href="#" class="ln-link" onclick="showLandingSection('reviews',null);closeMobileMenu();return false">Reviews</a>
     <a href="#" class="ln-link ln-cta" onclick="showLandingSection('register',null);closeMobileMenu();return false">Log In</a>
   </div>
 
@@ -65,11 +63,19 @@
         <div class="hs-div"></div>
         <div class="hs-item"><span class="hs-num" data-count="3">3</span><span class="hs-label">User Roles</span></div>
       </div>
-      <div class="scroll-cue reveal reveal-d5"><span class="scroll-cue-line"></span>Scroll</div>
+      <div class="palette-strip reveal reveal-d5" aria-label="FitCore brand color palette">
+        <span class="palette-label">Brand Palette</span>
+        <div class="palette-item"><span class="palette-swatch" style="background:#0a0a0a"></span><span class="palette-name">Black</span><span class="palette-hex">#0A0A0A</span></div>
+        <div class="palette-item"><span class="palette-swatch" style="background:#171917"></span><span class="palette-name">Charcoal</span><span class="palette-hex">#171917</span></div>
+        <div class="palette-item"><span class="palette-swatch" style="background:#e2e8e4"></span><span class="palette-name">Mist Gray</span><span class="palette-hex">#E2E8E4</span></div>
+        <div class="palette-item"><span class="palette-swatch" style="background:#f2f5f3"></span><span class="palette-name">Cloud Gray</span><span class="palette-hex">#F2F5F3</span></div>
+        <div class="palette-item"><span class="palette-swatch" style="background:#ffffff"></span><span class="palette-name">White</span><span class="palette-hex">#FFFFFF</span></div>
+        <div class="palette-item"><span class="palette-swatch" style="background:#7ffa88"></span><span class="palette-name">Lemon Green</span><span class="palette-hex">#7FFA88</span></div>
+      </div>
+      <div class="scroll-cue"><span class="scroll-cue-line"></span>Scroll</div>
     </div>
     <div class="hero-visual reveal reveal-d2">
       <img src="assets/pngegg.png" alt="FITCORE preview" class="hero-img">
-      <div class="hero-frame" aria-hidden="true"><i class="hf-c hf-tl"></i><i class="hf-c hf-tr"></i><i class="hf-c hf-bl"></i><i class="hf-c hf-br"></i></div>
       <span class="hero-plus hp-1" aria-hidden="true">+</span>
       <span class="hero-plus hp-2" aria-hidden="true">+</span>
       <span class="hero-plus hp-3" aria-hidden="true">+</span>
@@ -132,7 +138,7 @@
                 <th>Basic<br><span style="color:var(--orange);font-size:12px">&#8369;500/mo</span></th>
                 <th class="th-featured">Standard<br><span style="font-size:12px">&#8369;900/mo</span></th>
                 <th>Premium<br><span style="color:var(--orange);font-size:12px">&#8369;1,500/3mo</span></th>
-                <th style="color:var(--gold)">Walk-In<br><span style="font-size:12px">&#8369;100/day</span></th>
+                <th style="color:var(--gold)">Walk-In<br><span style="font-size:12px" class="js-walkin-price">&#8369;100/day</span></th>
               </tr>
             </thead>
             <tbody>
@@ -236,7 +242,7 @@
           </div>
           <div class="faq-item">
             <div class="faq-q">Is there a registration fee?</div>
-            <div class="faq-a">No registration fee for any plan. Walk-ins simply pay the ₱100 day rate at the front desk — no forms required.</div>
+            <div class="faq-a">No registration fee for any plan. Walk-ins simply pay the <span class="js-walkin-price-prose">₱100</span> day rate at the front desk — no forms required.</div>
           </div>
           <div class="faq-item">
             <div class="faq-q">What happens when my plan expires?</div>
@@ -259,49 +265,6 @@
         <p class="inner-sub">Certified coaches ready to push you past your limits.</p></div>
       </div>
       <div class="trainers-grid" id="trainersGrid"></div>
-    </div>
-  </div>
-
-  <!-- REVIEWS SECTION -->
-  <div id="landingReviews" class="landing-section" style="display:none">
-    <div class="inner-page">
-      <div class="section-head">
-        <span class="section-eyebrow reveal">04</span>
-        <div class="section-head-main reveal reveal-d1"><h2 class="inner-title">Member <span>Stories</span></h2>
-        <p class="inner-sub">Real results from real members at FitCore.</p></div>
-      </div>
-      <div class="reviews-grid">
-        <div class="review-card reveal">
-          <div class="rv-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
-          <p class="rv-quote">"The front desk team tracks everything — renewals, sessions, even my trainer bookings. I never have to remind them about anything."</p>
-          <div class="rv-user"><div class="rv-avatar">SH</div><div><div class="rv-name">Stephen Hugo</div><div class="rv-plan">Standard Member</div></div></div>
-        </div>
-        <div class="review-card reveal reveal-d1">
-          <div class="rv-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
-          <p class="rv-quote">"Clean equipment, fair price, and the 3-day renewal reminder actually works. I extended to a full year after my first month."</p>
-          <div class="rv-user"><div class="rv-avatar">MD</div><div><div class="rv-name">Mike Delavega</div><div class="rv-plan">Basic Member</div></div></div>
-        </div>
-        <div class="review-card reveal reveal-d2">
-          <div class="rv-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
-          <p class="rv-quote">"The trainer scheduling system is brilliant. No double bookings, no waiting — my coach is always ready when I walk in."</p>
-          <div class="rv-user"><div class="rv-avatar">CA</div><div><div class="rv-name">Christan Aranez</div><div class="rv-plan">Premium Member</div></div></div>
-        </div>
-        <div class="review-card reveal">
-          <div class="rv-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
-          <p class="rv-quote">"Walk-in friendly and zero registration headaches. Just pay at the desk and train. Exactly what I need on my busy weeks."</p>
-          <div class="rv-user"><div class="rv-avatar">SC</div><div><div class="rv-name">Sam Ervin Cuajor</div><div class="rv-plan">Walk-In Visitor</div></div></div>
-        </div>
-        <div class="review-card reveal reveal-d1">
-          <div class="rv-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
-          <p class="rv-quote">"Digital receipts for every payment, and I can see my sessions at a glance. This is how every gym should be run."</p>
-          <div class="rv-user"><div class="rv-avatar">JN</div><div><div class="rv-name">Janwell Nacario</div><div class="rv-plan">Standard Member</div></div></div>
-        </div>
-        <div class="review-card reveal reveal-d2">
-          <div class="rv-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
-          <p class="rv-quote">"I love that walk-ins are welcome too. My friends drop by without signing up and the staff handles everything smoothly."</p>
-          <div class="rv-user"><div class="rv-avatar">DR</div><div><div class="rv-name">Danica Reyes</div><div class="rv-plan">Premium Member</div></div></div>
-        </div>
-      </div>
     </div>
   </div>
 
@@ -338,20 +301,23 @@
         <!-- STEP 1: Choose Role -->
         <div id="regStep1">
           <div class="login-logo">
+            <div class="ms-step-icon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
             <h1>JOIN <span>FITCORE</span></h1>
             <p>Choose your account type</p>
           </div>
           <div id="regError" class="error-msg"></div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px">
-            <div id="roleCardStaff" onclick="selectRegRole('staff')" style="cursor:pointer;background:var(--navy-700);border:2px solid var(--navy-600);border-radius:12px;padding:20px 14px;text-align:center;transition:.2s">
-              <div style="font-size:32px;margin-bottom:8px">🖥️</div>
-              <div style="font-size:14px;font-weight:800;color:var(--white);text-transform:uppercase;letter-spacing:.5px">Staff</div>
-              <div style="font-size:11px;color:var(--gray-500);margin-top:4px;line-height:1.4">Front desk, billing & member management</div>
+          <div class="role-grid" id="roleGrid">
+            <div class="role-card" id="roleCardStaff" onclick="selectRegRole('staff')" style="cursor:pointer;display:flex;align-items:center;justify-content:flex-start;gap:7px;background:var(--navy-700);border:1.5px solid rgba(255,255,255,.16);border-radius:10px;padding:10px 8px;transition:.2s">
+              <span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex-shrink:0;color:var(--white)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></span>
+              <span style="font-size:12px;font-weight:800;color:var(--white);text-transform:uppercase;letter-spacing:.5px;line-height:1">Staff</span>
             </div>
-            <div id="roleCardTrainer" onclick="selectRegRole('trainer')" style="cursor:pointer;background:var(--navy-700);border:2px solid var(--navy-600);border-radius:12px;padding:20px 14px;text-align:center;transition:.2s">
-              <div style="font-size:32px;margin-bottom:8px">🏋️</div>
-              <div style="font-size:14px;font-weight:800;color:var(--white);text-transform:uppercase;letter-spacing:.5px">Trainer</div>
-              <div style="font-size:11px;color:var(--gray-500);margin-top:4px;line-height:1.4">Personal coach & session management</div>
+            <div class="role-card" id="roleCardTrainer" onclick="selectRegRole('trainer')" style="cursor:pointer;display:flex;align-items:center;justify-content:flex-start;gap:7px;background:var(--navy-700);border:1.5px solid rgba(255,255,255,.16);border-radius:10px;padding:10px 8px;transition:.2s">
+              <span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex-shrink:0;color:var(--white)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M6.5 6.5l11 11"/><path d="M21 21l-1-1"/><path d="M3 3l1 1"/><path d="M18 22l4-4"/><path d="M2 6l4-4"/><path d="M3 10l7-7"/><path d="M14 21l7-7"/></svg></span>
+              <span style="font-size:12px;font-weight:800;color:var(--white);text-transform:uppercase;letter-spacing:.5px;line-height:1">Trainer</span>
+            </div>
+            <div class="role-card" id="roleCardMember" onclick="selectRegRole('member')" style="cursor:pointer;display:flex;align-items:center;justify-content:flex-start;gap:7px;background:var(--navy-700);border:1.5px solid rgba(255,255,255,.16);border-radius:10px;padding:10px 8px;transition:.2s">
+              <span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex-shrink:0;color:var(--white)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
+              <span style="font-size:12px;font-weight:800;color:var(--white);text-transform:uppercase;letter-spacing:.5px;line-height:1">Member</span>
             </div>
           </div>
           <input type="hidden" id="regRole">
@@ -362,13 +328,14 @@
         <!-- STEP 2: Account Info -->
         <div id="regStep2" style="display:none">
           <div class="login-logo">
+            <div class="ms-step-icon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
             <h1>CREATE <span>ACCOUNT</span></h1>
             <p id="regStep2Sub">Staff Registration</p>
           </div>
           <!-- Step indicator -->
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:20px">
+<div style="display:flex;align-items:center;gap:6px;margin-bottom:20px">
             <div style="width:28px;height:4px;border-radius:2px;background:var(--orange)"></div>
-            <div style="flex:1;height:4px;border-radius:2px" id="regStepBar2" style="background:var(--navy-600)"></div>
+            <div style="flex:1;height:4px;border-radius:2px;background:var(--navy-600)" id="regStepBar2"></div>
           </div>
           <div id="regError2" class="error-msg"></div>
           <div class="form-group">
@@ -419,6 +386,7 @@
         <!-- STEP 3: Trainer Profile (trainer only) -->
         <div id="regStep3" style="display:none">
           <div class="login-logo">
+            <div class="ms-step-icon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
             <h1>TRAINER <span>PROFILE</span></h1>
             <p>Tell us about your expertise</p>
           </div>
@@ -503,45 +471,166 @@
 
       </div>
     </div><!-- /login-card -->
+
+    <!-- MEMBER SELF-SIGNUP (Guest → Member) -->
+    <div id="memberSignup" style="display:none;width:100%;max-width:440px;margin:0 auto;min-width:0">
+      <div class="login-card login-card-compact">
+
+        <!-- STEP 1: Choose Plan -->
+        <div id="msStep1">
+          <div class="ms-step-head">
+            <div class="ms-step-icon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+            <h1>JOIN <span>FITCORE</span></h1>
+            <p>Choose your membership plan</p>
+          </div>
+          <div id="msPlanOptions" class="ms-plan-opts"></div>
+          <select id="msPlanSelect" style="display:none"></select>
+          <div id="msStep1Error" class="error-msg" style="display:none"></div>
+          <button type="button" class="btn-primary btn-cta" onclick="msStep1Next()">Continue →</button>
+          <div class="login-footer login-footer-muted"><a onclick="msBackToLogin()">← Back to Login</a></div>
+        </div>
+
+        <!-- STEP 2: Personal Details -->
+        <div id="msStep2" style="display:none">
+          <div class="ms-step-head">
+            <div class="ms-step-icon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+            <h1>CREATE <span>ACCOUNT</span></h1>
+            <p>Your personal details</p>
+          </div>
+          <div id="msStep2Error" class="error-msg"></div>
+          <div class="form-group"><label>Full Name *</label><input type="text" id="msName" placeholder="Enter your full name"></div>
+          <div class="form-group"><label>Contact Number *</label><input type="tel" id="msContact" placeholder="09171234567" maxlength="11"></div>
+          <div class="form-group"><label>Email *</label><input type="email" id="msEmail" placeholder="you@email.com"></div>
+          <button type="button" class="btn-primary btn-cta" onclick="msStep2Next()">Continue →</button>
+          <div class="login-footer login-footer-muted"><a onclick="msGoStep1()">← Back</a></div>
+        </div>
+
+        <!-- STEP 3: Login Credentials -->
+        <div id="msStep3" style="display:none">
+          <div class="ms-step-head">
+            <div class="ms-step-icon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+            <h1>CREATE <span>LOGIN</span></h1>
+            <p>Choose your username &amp; password</p>
+          </div>
+          <div id="msError" class="error-msg"></div>
+          <div class="form-group"><label>Username *</label><input type="text" id="msUsername" placeholder="Choose a username" maxlength="20"></div>
+          <div class="form-group">
+            <label>Password *</label>
+            <div class="input-wrap">
+              <input type="password" id="msPass" placeholder="Min 6 characters" oninput="updateMsStrength(this.value)">
+              <button type="button" class="pw-toggle" onclick="togglePw('msPass',this)" aria-label="Toggle password visibility"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+            </div>
+            <div class="pw-strength" id="msPwStrength" style="display:none"><div class="pw-strength-bar" id="mps1"></div><div class="pw-strength-bar" id="mps2"></div><div class="pw-strength-bar" id="mps3"></div></div>
+            <div class="pw-strength-label" id="msPsLabel" style="display:none"></div>
+          </div>
+          <div class="form-group">
+            <label>Confirm Password *</label>
+            <div class="input-wrap">
+              <input type="password" id="msPass2" placeholder="Repeat password">
+              <button type="button" class="pw-toggle" onclick="togglePw('msPass2',this)" aria-label="Toggle password visibility"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+            </div>
+          </div>
+          <div id="msSuccess" class="success-msg"></div>
+          <button type="button" class="btn-primary btn-cta" onclick="submitMemberSignup()">Create My Account</button>
+          <div class="login-footer login-footer-muted"><a onclick="msGoStep2()">← Back</a></div>
+          <p class="ms-note">After registering, please pay at the front desk (Cash or GCash). Our staff will activate your account once payment is confirmed — you can log in then.</p>
+        </div>
+
+        <!-- STEP 4: Done / Pending payment -->
+        <div id="msDone" style="display:none">
+          <div class="ms-step-head">
+            <div class="ms-step-icon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+            <h1>ALMOST <span>THERE!</span></h1>
+            <p>Registration submitted</p>
+          </div>
+          <div id="msDoneMsg" class="success-msg"></div>
+          <button type="button" class="btn-primary btn-cta" onclick="msBackToLogin()">Back to Login</button>
+        </div>
+
+      </div>
+    </div>
   </div><!-- /login-wrap -->
   </div><!-- /landingRegister -->
 
-  <!-- FOOTER -->
-  <footer class="site-footer">
-    <div class="sf-grid">
-      <div class="sf-col sf-brand-col">
-        <div class="sf-brand">FIT<span>CORE</span></div>
-        <p>A complete gym management system for local fitness centers — members, billing, trainer schedules, walk-ins, and reports in one place.</p>
-      </div>
-      <div class="sf-col">
-        <h4>Explore</h4>
-        <a onclick="showLandingSection('home',null)">Home</a>
-        <a onclick="showLandingSection('features',null)">Features</a>
-        <a onclick="showLandingSection('explore',null)">Membership Plans</a>
-        <a onclick="showLandingSection('trainers',null)">Our Trainers</a>
-        <a onclick="showLandingSection('reviews',null)">Member Stories</a>
-      </div>
-      <div class="sf-col">
-        <h4>Membership</h4>
-        <a onclick="showLandingSection('explore',null)">Basic — &#8369;500/mo</a>
-        <a onclick="showLandingSection('explore',null)">Standard — &#8369;900/mo</a>
-        <a onclick="showLandingSection('explore',null)">Premium — &#8369;1,500/3mo</a>
-        <a onclick="showLandingSection('explore',null)">Walk-In — &#8369;100/day</a>
-      </div>
-      <div class="sf-col">
-        <h4>Contact</h4>
-        <div class="sf-contact-row"><span class="sf-contact-icon">&#128205;</span>123 Fitness Ave, Poblacion District</div>
-        <div class="sf-contact-row"><span class="sf-contact-icon">&#128222;</span>(032) 555-1234</div>
-        <div class="sf-contact-row"><span class="sf-contact-icon">&#9993;</span>hello@fitcore.gym</div>
-        <div class="sf-contact-row"><span class="sf-contact-icon">&#128368;</span>Mon–Sat 5AM–10PM · Sun 7AM–6PM</div>
-      </div>
+  </div><!-- /loginPage -->
+
+<!-- ============================================================ PENDING GATE ============================================================ -->
+<div id="pendingGate" class="pending-gate" style="display:none">
+  <div class="pending-gate-card">
+    <div class="pending-gate-logo">FIT<span>CORE</span></div>
+    <div class="pending-gate-ico" id="pgIco">⏳</div>
+    <div class="pending-gate-title" id="pgTitle">Payment Pending</div>
+    <p class="pending-gate-msg" id="pgMsg">Your account is pending. Please visit the front desk to complete your payment (<strong>Cash</strong> or <strong>GCash</strong>) and activate your account.</p>
+    <div class="pending-gate-info">
+      <div class="pending-gate-row"><span>Member</span><strong id="pgName">—</strong></div>
+      <div class="pending-gate-row"><span>Member ID</span><strong id="pgId">—</strong></div>
+      <div class="pending-gate-row"><span>Plan</span><strong id="pgPlanName">—</strong></div>
+      <div class="pending-gate-row"><span>Amount</span><strong id="pgPlanPrice">—</strong></div>
     </div>
-    <div class="sf-bottom">&copy; 2026 FITCORE — Gym Management System. All rights reserved.</div>
-  </footer>
-</div><!-- /loginPage -->
+    <div class="pending-gate-note" id="pgNote">Your QR code unlocks automatically once payment is confirmed.</div>
+    <button class="btn-primary" style="width:100%;margin-top:16px" onclick="doLogout()">🚪 Logout</button>
+  </div>
+</div>
 
 <!-- ============================================================ APP ============================================================ -->
 <div id="app">
+  <div class="modal-overlay" id="messageModal">
+    <div class="modal">
+      <div class="modal-head"><h2 id="messageModalTitle">Message the Gym</h2><button class="modal-close" onclick="closeModal('messageModal')">&#10005;</button></div>
+      <div class="modal-body" id="messageModalBody" style="max-height:52vh;overflow-y:auto"></div>
+      <div class="modal-foot" style="gap:8px"><input type="text" id="msgInput" placeholder="Type your message…" style="flex:1;background:rgba(255,255,255,.05);border:1.5px solid rgba(255,255,255,.12);border-radius:10px;color:var(--white);padding:10px 14px;outline:none" onkeydown="if(event.key==='Enter')sendMessage()"><button class="btn-primary" style="width:auto" onclick="sendMessage()">Send</button></div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="announceModal">
+    <div class="modal">
+      <div class="modal-head"><h2>Post Announcement</h2><button class="modal-close" onclick="closeModal('announceModal')">&#10005;</button></div>
+      <div class="modal-body">
+        <div id="announceFormError" class="error-msg"></div>
+        <div class="form-row">
+          <div class="form-group"><label>Type</label><select id="an_type"><option value="general">General</option><option value="event">Event</option><option value="holiday">Holiday / Gym Closed</option><option value="alert">Alert</option></select></div>
+          <div class="form-group"><label>Date</label><input type="date" id="an_date"></div>
+        </div>
+        <div class="form-group"><label>Title *</label><input type="text" id="an_title" placeholder="e.g. Gym Closed on Monday"></div>
+        <div class="form-group"><label>Message *</label><textarea id="an_text" rows="4" placeholder="e.g. The gym will be closed on August 21 for maintenance. See you on the 22nd!"></textarea></div>
+      </div>
+      <div class="modal-foot"><button class="btn-secondary" onclick="closeModal('announceModal')">Cancel</button><button class="btn-primary" onclick="saveAnnouncement()">Post Announcement</button></div>
+    </div>
+   </div>
+
+  <!-- Member Edit Profile (photo) -->
+  <div class="modal-overlay" id="memberProfileEditModal">
+    <div class="modal" style="max-width:420px">
+      <div class="modal-head"><h2>Edit Profile</h2><button class="modal-close" onclick="closeModal('memberProfileEditModal')">&#10005;</button></div>
+      <div class="modal-body">
+        <div id="mepError" class="error-msg"></div>
+        <div class="form-group">
+          <label>Profile Picture</label>
+          <div style="display:flex;align-items:center;gap:12px">
+            <img id="mep_avatar_preview" src="" style="width:54px;height:54px;border-radius:50%;object-fit:cover;border:1px solid rgba(255,255,255,.12);display:none;flex-shrink:0">
+            <button type="button" class="btn-secondary btn-sm" onclick="document.getElementById('mep_avatar_file').click()" style="flex:1">Choose photo</button>
+            <input type="file" id="mep_avatar_file" accept="image/*" onchange="onImagePick(this,'mep_avatar','mep_avatar_preview','mep_avatar_clear')" style="display:none">
+            <input type="hidden" id="mep_avatar" value="">
+            <button type="button" class="btn-icon btn-sm" id="mep_avatar_clear" onclick="removeImage('mep_avatar','mep_avatar_preview','mep_avatar_clear')" title="Remove photo" style="display:none"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/></svg></button>
+          </div>
+          <p style="font-size:11px;color:var(--gray-500);margin-top:4px">Profile photo shown in your dashboard and on your QR.</p>
+        </div>
+        <div class="form-group">
+          <label>Background Photo</label>
+          <div style="display:flex;align-items:center;gap:12px">
+            <img id="mep_bg_preview" src="" style="width:54px;height:34px;border-radius:6px;object-fit:cover;border:1px solid rgba(255,255,255,.12);display:none;flex-shrink:0">
+            <button type="button" class="btn-secondary btn-sm" onclick="document.getElementById('mep_bg_file').click()" style="flex:1">Choose background</button>
+            <input type="file" id="mep_bg_file" accept="image/*" onchange="onImagePick(this,'mep_bg','mep_bg_preview','mep_bg_clear')" style="display:none">
+            <input type="hidden" id="mep_bg" value="">
+            <button type="button" class="btn-icon btn-sm" id="mep_bg_clear" onclick="removeImage('mep_bg','mep_bg_preview','mep_bg_clear')" title="Remove background" style="display:none"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/></svg></button>
+          </div>
+          <p style="font-size:11px;color:var(--gray-500);margin-top:4px">Shown behind your dashboard hero. Keep each image small — stored in browser storage.</p>
+        </div>
+      </div>
+      <div class="modal-foot"><button class="btn-secondary" onclick="closeModal('memberProfileEditModal')">Cancel</button><button class="btn-primary" onclick="saveMemberProfileEdit()">Save Profile</button></div>
+    </div>
+  </div>
+
   <!-- Sidebar overlay for mobile -->
   <div class="sidebar-overlay" id="sidebarOverlay" onclick="closeSidebar()"></div>
   <!-- SIDEBAR -->
@@ -551,7 +640,7 @@
         <div class="brand-name">FIT<span>CORE</span></div>
       </div>
     </div>
-    <div class="sidebar-user" onclick="openStaffEditModal()" style="cursor:pointer;transition:.2s" onmouseover="this.style.background='rgba(114,133,255,.08)'" onmouseout="this.style.background=''">
+    <div class="sidebar-user" onclick="openStaffEditModal()" style="cursor:pointer;transition:.2s" onmouseover="this.style.background='rgba(127,250,136,.08)'" onmouseout="this.style.background=''">
       <div class="user-badge">
         <div class="user-avatar" id="sideUserAvatar"></div>
         <div class="user-info">
@@ -575,20 +664,31 @@
       <button class="topbar-menu-btn" onclick="toggleSidebar()" aria-label="Menu">☰</button><div class="topbar-title" id="pageTitle">Dashboard</div>
       <div class="topbar-right">
         <div class="topbar-date" id="topDate"></div>
-        <div class="user-avatar" id="topAvatar" style="width:34px;height:34px;font-size:12px;font-weight:700;flex-shrink:0;cursor:pointer;transition:.2s" title="Edit My Profile" onclick="openStaffEditModal()" onmouseover="this.style.opacity='.8'" onmouseout="this.style.opacity='1'"></div>
+        <div class="user-avatar" id="topAvatar" style="width:34px;height:34px;font-size:12px;font-weight:700;flex-shrink:0;cursor:pointer;transition:.2s" title="Edit Profile" onclick="openStaffEditModal()" onmouseover="this.style.opacity='.8'" onmouseout="this.style.opacity='1'"></div>
       </div>
     </div>
     <div class="content">
+      <!-- Floating refresh button (appears when scrolled down) -->
+      <button id="scrollRefreshBtn" onclick="refreshCurrentPanel()" title="Refresh data" style="display:none;position:fixed;bottom:88px;right:20px;width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,var(--orange),var(--orange-dark));border:none;color:var(--white);cursor:pointer;z-index:500;align-items:center;justify-content:center;box-shadow:0 8px 24px rgba(127,250,136,.4);transition:.2s"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
       <!-- PANELS -->
       <div class="panel" id="panelDashboard"></div>
       <div class="panel" id="panelMembers"></div>
+      <div class="panel" id="panelHistory"></div>
       <div class="panel" id="panelBilling"></div>
       <div class="panel" id="panelSchedule"></div>
+      <div class="panel" id="panelMyassigned"></div>
       <div class="panel" id="panelNotifications"></div>
+      <div class="panel" id="panelRenewed"></div>
+      <div class="panel" id="panelMessages"></div>
+      <div class="panel" id="panelAnnouncements"></div>
       <div class="panel" id="panelPlans"></div>
       <div class="panel" id="panelWalkin"></div>
       <div class="panel" id="panelReports"></div>
       <div class="panel" id="panelUsers"></div>
+      <div class="panel" id="panelQueue"></div>
+      <div class="panel" id="panelScanner"></div>
+      <div class="panel" id="panelMyqr"></div>
+      <div class="panel" id="panelMyattendance"></div>
     </div>
   </div>
 </div>
@@ -603,17 +703,28 @@
     </div>
     <div class="modal-body">
       <div id="sepError" class="error-msg"></div>
-      <div style="display:flex;align-items:center;gap:16px;margin-bottom:24px;padding:16px;background:rgba(114,133,255,.06);border:1px solid rgba(114,133,255,.18);border-radius:10px">
-        <div id="sep_avatar" class="user-avatar avatar-staff" style="width:56px;height:56px;font-size:18px;font-weight:800;border-radius:12px;flex-shrink:0"></div>
+      <div style="display:flex;align-items:center;gap:16px;margin-bottom:24px;padding:16px;background:rgba(127,250,136,.06);border:1px solid rgba(127,250,136,.18);border-radius:10px">
+        <div id="sep_avatar_initials" class="user-avatar avatar-staff" style="width:56px;height:56px;font-size:18px;font-weight:800;border-radius:12px;flex-shrink:0;background-size:cover;background-position:center;background-repeat:no-repeat"></div>
+        <img id="sep_avatar_preview" src="" style="width:56px;height:56px;border-radius:12px;object-fit:cover;border:1px solid rgba(255,255,255,.12);display:none;flex-shrink:0">
         <div>
           <div id="sep_display_name" style="font-size:16px;font-weight:800;color:var(--white)"></div>
           <div id="sep_display_username" style="font-size:11px;font-family:monospace;color:var(--gray-500);margin-top:2px"></div>
-          <span style="font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1px;padding:2px 8px;border-radius:4px;background:rgba(114,133,255,.2);color:#aab5ff;margin-top:6px;display:inline-block">Staff</span>
+          <span id="sep_role_badge" style="font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1px;padding:2px 8px;border-radius:4px;background:rgba(127,250,136,.2);color:#d7ddd8;margin-top:6px;display:inline-block">Staff</span>
         </div>
       </div>
       <div class="form-group">
+        <label>Profile Picture</label>
+        <div style="display:flex;align-items:center;gap:10px">
+          <button type="button" class="btn-secondary btn-sm" onclick="document.getElementById('sep_avatar_file').click()" style="flex:1">Choose photo</button>
+          <input type="file" id="sep_avatar_file" accept="image/*" onchange="onImagePick(this,'sep_avatar','sep_avatar_preview','sep_avatar_clear')" style="display:none">
+          <input type="hidden" id="sep_avatar" value="">
+          <button type="button" class="btn-icon btn-sm" id="sep_avatar_clear" onclick="removeImage('sep_avatar','sep_avatar_preview','sep_avatar_clear')" title="Remove photo" style="display:none"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/></svg></button>
+        </div>
+        <p style="font-size:11px;color:var(--gray-500);margin-top:4px">Your profile photo shown in the sidebar and topbar.</p>
+      </div>
+      <div class="form-group">
         <label>Full Name *</label>
-        <input type="text" id="sep_name" placeholder="Your full name" oninput="document.getElementById('sep_avatar').textContent=initials(this.value||currentUser.name);document.getElementById('sep_display_name').textContent=this.value||currentUser.name">
+        <input type="text" id="sep_name" placeholder="Your full name" oninput="updateSepAvatar(this.value)">
       </div>
       <div class="form-group">
         <label>Contact Number</label>
@@ -646,7 +757,7 @@
       <div class="form-row cols-3">
         <div class="form-group"><label>Age</label><input type="number" id="mf_age" min="1" max="120"></div>
         <div class="form-group"><label>Sex</label><select id="mf_sex"><option value="">Select</option><option>Male</option><option>Female</option></select></div>
-        <div class="form-group"><label>Membership Plan *</label><select id="mf_plan"></select><div id="mf_plan_note" style="display:none;align-items:center;gap:6px;margin-top:6px;background:rgba(114,133,255,.08);border:1px solid rgba(114,133,255,.2);border-radius:6px;padding:7px 10px;font-size:11px;color:var(--orange);font-weight:600"><span style="font-size:14px">🔒</span> Only Admin can change the membership plan</div></div>
+        <div class="form-group"><label>Membership Plan *</label><select id="mf_plan"></select><div id="mf_plan_note" style="display:none;align-items:center;gap:6px;margin-top:6px;background:rgba(127,250,136,.08);border:1px solid rgba(127,250,136,.2);border-radius:6px;padding:7px 10px;font-size:11px;color:var(--orange);font-weight:600"><span style="font-size:14px">🔒</span> Only Admin can change the membership plan</div></div>
       </div>
       <div class="form-row">
         <div class="form-group"><label>Start Date *</label><input type="date" id="mf_start"></div>
@@ -656,16 +767,24 @@
         <div class="form-group"><label>Emergency Contact Name</label><input type="text" id="mf_ecname"></div>
         <div class="form-group"><label>Emergency Contact Number</label><input type="text" id="mf_ecnum"></div>
       </div>
-      <div class="form-group"><label>Medical / Special Notes</label><textarea id="mf_notes" rows="2"></textarea></div>
+<div class="form-group"><label>Medical / Special Notes</label><textarea id="mf_notes" rows="2"></textarea></div>
+      <div style="font-size:11px;color:var(--gray-500)">Member photos are set by the member from their dashboard "Edit Profile".</div>
+      <div style="border-top:1px solid rgba(127,250,136,.2);margin-top:16px;padding-top:16px">
+        <div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:2px;color:var(--orange)">🔑 Member Login <span style="color:var(--gray-500);font-weight:400;letter-spacing:0">(optional)</span></div>
+        <div class="form-row" style="margin-top:10px">
+          <div class="form-group"><label>Login Username</label><input type="text" id="mf_user" placeholder="e.g. merjohn"></div>
+          <div class="form-group"><label>Password</label><input type="password" id="mf_pass" placeholder="Leave empty to keep current"></div>
+        </div>
+      </div>
       <!-- BILLING & PAYMENT SECTION -->
-      <div id="mf_billing_section" style="border-top:1px solid rgba(114,133,255,.2);margin-top:16px;padding-top:16px">
+      <div id="mf_billing_section" style="border-top:1px solid rgba(127,250,136,.2);margin-top:16px;padding-top:16px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
           <div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:2px;color:var(--orange)">💳 Billing & Payment</div>
-          <div id="mf_billing_note" style="display:none;align-items:center;gap:6px;background:rgba(114,133,255,.08);border:1px solid rgba(114,133,255,.2);border-radius:6px;padding:5px 10px;font-size:11px;color:var(--orange);font-weight:600"><span>🔒</span> Only Admin can edit payment details</div>
+          <div id="mf_billing_note" style="display:none;align-items:center;gap:6px;background:rgba(127,250,136,.08);border:1px solid rgba(127,250,136,.2);border-radius:6px;padding:5px 10px;font-size:11px;color:var(--orange);font-weight:600"><span>🔒</span> Only Admin can edit payment details</div>
         </div>
         <div class="form-row">
           <div class="form-group"><label>Payment Date *</label><input type="date" id="mf_paydate"></div>
-          <div class="form-group"><label>Amount Paid (₱) *</label><input type="number" id="mf_amount" readonly style="background:rgba(52,211,153,.05);border-color:rgba(52,211,153,.2);cursor:not-allowed" placeholder="Auto-filled from plan"></div>
+          <div class="form-group"><label>Amount Paid (₱) *</label><input type="number" id="mf_amount" readonly style="background:rgba(127,250,136,.05);border-color:rgba(127,250,136,.2);cursor:not-allowed" placeholder="Auto-filled from plan"></div>
         </div>
         <div class="form-row">
           <div class="form-group"><label>Payment Method *</label><select id="mf_method"><option value="">Select</option><option>Cash</option><option>GCash</option><option>Bank Transfer</option></select></div>
@@ -697,10 +816,11 @@
       </div>
       <div class="form-group"><label>Membership Package *</label><select id="pf_plan" onchange="onPayPlanChange()"><option value="">Select plan</option></select></div>
       <div class="form-row">
-        <div class="form-group"><label>Amount Paid (₱) *</label><input type="number" id="pf_amount" min="1" step="0.01" readonly style="background:rgba(52,211,153,.05);border-color:rgba(52,211,153,.2);cursor:not-allowed"></div>
+        <div class="form-group"><label>Amount Paid (₱) *</label><input type="number" id="pf_amount" min="1" step="0.01" readonly style="background:rgba(127,250,136,.05);border-color:rgba(127,250,136,.2);cursor:not-allowed"></div>
         <div class="form-group"><label>Payment Date *</label><input type="date" id="pf_date"></div>
       </div>
-      <div class="form-group"><label>Payment Method *</label><select id="pf_method"><option value="">Select</option><option>Cash</option><option>GCash</option><option>Bank Transfer</option></select></div>
+      <div class="form-group"><label>Payment Method *</label><select id="pf_method" onchange="togglePfReference()"><option value="">Select</option><option>Cash</option><option>GCash</option><option>Bank Transfer</option></select></div>
+      <div id="pf_refWrap" style="display:none" class="form-group"><label>GCash Reference Number *</label><input type="text" id="pf_reference" placeholder="e.g. 1234-5678-9012"></div>
       <div class="form-group"><label>Notes</label><textarea id="pf_notes" rows="2"></textarea></div>
     </div>
     <div class="modal-foot"><button class="btn-secondary" onclick="closeModal('paymentModal')">Cancel</button><button class="btn-primary" onclick="savePayment()">Record Payment</button></div>
@@ -711,7 +831,7 @@
   <div class="modal" style="max-width:420px">
     <div class="modal-head"><h2>Payment Receipt</h2><button class="modal-close" onclick="closeModal('receiptModal')">✕</button></div>
     <div class="modal-body" id="receiptBody"></div>
-    <div class="modal-foot"><button class="btn-secondary" onclick="closeModal('receiptModal')">Close</button><button class="btn-primary" onclick="window.print()">Print Receipt</button></div>
+    <div class="modal-foot"><button class="btn-secondary" onclick="closeModal('receiptModal')">Close</button><button class="btn-secondary" onclick="printReceipt()">🖨 Print</button><button class="btn-primary" onclick="printReceipt()">⬇ Download PDF</button></div>
   </div>
 </div>
 <!-- Edit Payment Modal -->
@@ -720,7 +840,7 @@
     <div class="modal-head"><h2>✏️ Edit Payment</h2><button class="modal-close" onclick="closeModal('editPaymentModal')">✕</button></div>
     <div class="modal-body">
       <div id="editPaymentError" class="error-msg"></div>
-      <div style="background:rgba(114,133,255,.06);border:1px solid rgba(114,133,255,.2);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--gray-300);margin-bottom:16px">
+      <div style="background:rgba(127,250,136,.06);border:1px solid rgba(127,250,136,.2);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--gray-300);margin-bottom:16px">
         ⚠️ Editing a payment will also update the member's plan and expiry date accordingly.
       </div>
       <input type="hidden" id="ep_id">
@@ -732,8 +852,9 @@
         <div class="form-group"><label>Payment Date *</label><input type="date" id="ep_date"></div>
       </div>
       <div class="form-group"><label>Payment Method *</label>
-        <select id="ep_method"><option value="">Select</option><option>Cash</option><option>GCash</option><option>Bank Transfer</option></select>
+        <select id="ep_method" onchange="document.getElementById('ep_refWrap').style.display=this.value==='GCash'?'block':'none'"><option value="">Select</option><option>Cash</option><option>GCash</option><option>Bank Transfer</option></select>
       </div>
+      <div id="ep_refWrap" style="display:none" class="form-group"><label>GCash Reference Number *</label><input type="text" id="ep_reference" placeholder="e.g. 1234-5678-9012"></div>
       <div class="form-group"><label>Notes</label><textarea id="ep_notes" rows="2"></textarea></div>
     </div>
     <div class="modal-foot">
@@ -742,6 +863,25 @@
     </div>
   </div>
 </div>
+<!-- Confirm Payment & Activate Modal (Payment Queue) -->
+<div class="modal-overlay" id="confirmPaymentModal">
+  <div class="modal">
+    <div class="modal-head"><h2>💰 Confirm Payment &amp; Activate</h2><button class="modal-close" onclick="closeModal('confirmPaymentModal')">✕</button></div>
+    <div class="modal-body">
+      <div id="confirmPaymentError" class="error-msg"></div>
+      <div id="cpm_summary"></div>
+      <input type="hidden" id="cpm_memberId">
+      <div class="form-row">
+        <div class="form-group"><label>Amount Paid (₱) *</label><input type="number" id="cpm_amount" min="1" step="0.01"></div>
+        <div class="form-group"><label>Payment Method *</label><select id="cpm_method" onchange="toggleCpmReference()"><option value="">Select</option><option>Cash</option><option>GCash</option></select></div>
+      </div>
+      <div id="cpm_refWrap" style="display:none" class="form-group"><label>GCash Reference Number *</label><input type="text" id="cpm_reference" placeholder="e.g. 1234-5678-9012"></div>
+      <div style="margin-top:10px;font-size:11px;color:#cbd5e1;background:rgba(127,250,136,.06);border:1px solid rgba(127,250,136,.2);border-radius:6px;padding:8px 12px">&#128161; This records the payment, activates the member, computes plan start/expiry, and unlocks their QR code.</div>
+    </div>
+    <div class="modal-foot"><button class="btn-secondary" onclick="closeModal('confirmPaymentModal')">Cancel</button><button class="btn-primary" onclick="confirmPayment()">✓ Confirm &amp; Activate</button></div>
+  </div>
+</div>
+
 <!-- Session Modal -->
 <div class="modal-overlay" id="sessionModal">
   <div class="modal">
@@ -823,7 +963,7 @@
         <div class="form-group"><label>Password *</label><div class="input-wrap"><input type="password" id="uf_pass" placeholder="Leave blank to keep current"><button type="button" class="pw-toggle" onclick="togglePw('uf_pass',this)" aria-label="Toggle password visibility"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></div></div>
         <div class="form-group"><label>Confirm Password *</label><div class="input-wrap"><input type="password" id="uf_pass2" placeholder="Repeat password"><button type="button" class="pw-toggle" onclick="togglePw('uf_pass2',this)" aria-label="Toggle password visibility"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></div></div>
       </div>
-      <div id="uf_role_row"><div class="form-group"><label>Role *</label><select id="uf_role"><option value="staff">Staff</option><option value="trainer">Trainer</option></select></div></div>
+      <div id="uf_role_row"><div class="form-group"><label>Role *</label><select id="uf_role"><option value="admin">Admin</option><option value="staff">Staff</option><option value="trainer">Trainer</option></select></div></div>
     </div>
     <div class="modal-foot"><button class="btn-secondary" onclick="closeModal('userModal')">Cancel</button><button class="btn-primary" onclick="saveUser()">Save User</button></div>
   </div>
@@ -887,7 +1027,7 @@
         <input type="text" id="ci_search" placeholder="Type name or ID to search…" oninput="filterCheckinList(this.value)" autocomplete="off">
         <div id="ci_list" style="background:var(--navy-700);border:1px solid var(--navy-600);border-radius:8px;max-height:180px;overflow-y:auto;display:none;margin-top:4px;position:relative;z-index:10"></div>
         <input type="hidden" id="ci_member">
-        <div id="ci_selected" style="display:none;margin-top:8px;background:rgba(52,211,153,.07);border:1px solid rgba(52,211,153,.2);border-radius:8px;padding:9px 12px;font-size:13px;color:var(--green)"></div>
+        <div id="ci_selected" style="display:none;margin-top:8px;background:rgba(127,250,136,.07);border:1px solid rgba(127,250,136,.2);border-radius:8px;padding:9px 12px;font-size:13px;color:var(--green)"></div>
       </div>
     </div>
     <div class="modal-foot"><button class="btn-secondary" onclick="closeModal('checkinModal')">Cancel</button><button class="btn-primary" onclick="doCheckin()">Confirm Check-In</button></div>
@@ -904,7 +1044,7 @@
         <input type="text" id="co_search" placeholder="Type name to search…" oninput="filterCheckoutList(this.value)" autocomplete="off">
         <div id="co_list" style="background:var(--navy-700);border:1px solid var(--navy-600);border-radius:8px;max-height:180px;overflow-y:auto;display:none;margin-top:4px;position:absolute;width:100%;z-index:10"></div>
         <input type="hidden" id="co_member">
-        <div id="co_selected" style="display:none;margin-top:8px;background:rgba(114,133,255,.07);border:1px solid rgba(114,133,255,.2);border-radius:8px;padding:9px 12px;font-size:13px;color:var(--orange)"></div>
+        <div id="co_selected" style="display:none;margin-top:8px;background:rgba(127,250,136,.07);border:1px solid rgba(127,250,136,.2);border-radius:8px;padding:9px 12px;font-size:13px;color:var(--orange)"></div>
       </div>
     </div>
     <div class="modal-foot"><button class="btn-secondary" onclick="closeModal('checkoutModal')">Cancel</button><button class="btn-primary" onclick="doCheckout()">Confirm Check-Out</button></div>
@@ -920,14 +1060,30 @@
       <div class="form-group"><label>Visitor Name *</label><input type="text" id="wi_name" placeholder="Enter visitor's full name"></div>
       <div style="background:var(--navy-700);border-radius:10px;padding:14px;margin-top:8px;text-align:center">
         <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--gray-500);margin-bottom:4px">Walk-In Fee</div>
-        <div style="font-size:32px;font-weight:900;font-family:'Barlow Condensed',sans-serif;color:var(--orange)">₱100.00</div>
-        <div style="font-size:11px;color:var(--gray-500);margin-top:2px">Fixed daily rate · Single visit</div>
+        <div style="font-size:32px;font-weight:900;font-family:'Space Grotesk',sans-serif;color:var(--orange)" id="walkinFeeDisplay">₱100.00</div>
+        <div style="font-size:11px;color:var(--gray-500);margin-top:2px" id="walkinFeeNote">Daily rate · Single visit · Set by admin</div>
       </div>
     </div>
     <div class="modal-foot" id="walkinFooterDefault"><button class="btn-secondary" onclick="closeModal('walkinModal')">Cancel</button><button class="btn-primary" onclick="walkinAskConfirm()">Confirm &amp; Record</button></div>
     <div class="modal-foot" id="walkinFooterConfirm" style="display:none;flex-direction:column;gap:10px">
-      <div style="background:rgba(114,133,255,.1);border:1px solid rgba(114,133,255,.3);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--orange);text-align:center">⚠️ Are you sure you want to record this walk-in and collect <strong>₱100.00</strong>?</div>
+      <div style="background:rgba(127,250,136,.1);border:1px solid rgba(127,250,136,.3);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--orange);text-align:center" id="walkinConfirmText">⚠️ Are you sure you want to record this walk-in and collect <strong>₱100.00</strong>?</div>
       <div style="display:flex;gap:8px"><button class="btn-secondary" style="flex:1" onclick="walkinCancelConfirm()">Go Back</button><button class="btn-primary" style="flex:1" onclick="saveWalkin()">Yes, Record It</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- Walk-In Price Settings Modal (admin only) -->
+<div class="modal-overlay" id="walkinSettingsModal">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-head"><h2>⚙ Walk-In Price</h2><button class="modal-close" onclick="closeModal('walkinSettingsModal')">✕</button></div>
+    <div class="modal-body">
+      <div id="walkinFeeError" class="error-msg"></div>
+      <div class="form-group"><label>Daily Walk-In Fee (₱) *</label><input type="number" id="wiFeeInput" min="1" step="any" placeholder="e.g. 100" onkeydown="if(event.key==='Enter')saveWalkinFee()"></div>
+      <div style="font-size:11px;color:var(--gray-500);line-height:1.6">This is the single-day rate charged to non-members. Staff use this price when registering walk-ins and it updates the receipt, reports, and the public plans page.</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-secondary" onclick="closeModal('walkinSettingsModal')">Cancel</button>
+      <button class="btn-primary" onclick="saveWalkinFee()">✓ Save Price</button>
     </div>
   </div>
 </div>
@@ -943,9 +1099,21 @@
       <button class="modal-close" onclick="closeModal('trainerEditProfileModal')">&#10005;</button>
     </div>
     <div class="modal-body" style="overflow-y:auto">
-      <div id="tepError" class="error-msg"></div>
+       <div id="tepError" class="error-msg"></div>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+       <div class="form-group">
+         <label>Profile Picture</label>
+         <div style="display:flex;align-items:center;gap:10px">
+           <img id="tep_avatar_preview" src="" style="width:54px;height:54px;border-radius:50%;object-fit:cover;border:1px solid rgba(255,255,255,.12);display:none;flex-shrink:0">
+           <button type="button" class="btn-secondary btn-sm" onclick="document.getElementById('tep_avatar_file').click()" style="flex:1">Choose photo</button>
+           <input type="file" id="tep_avatar_file" accept="image/*" onchange="onImagePick(this,'tep_avatar','tep_avatar_preview','tep_avatar_clear')" style="display:none">
+           <input type="hidden" id="tep_avatar" value="">
+           <button type="button" class="btn-icon btn-sm" id="tep_avatar_clear" onclick="removeImage('tep_avatar','tep_avatar_preview','tep_avatar_clear')" title="Remove photo" style="display:none"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/></svg></button>
+         </div>
+         <p style="font-size:11px;color:var(--gray-500);margin-top:4px">Your profile photo shown in the sidebar and topbar.</p>
+       </div>
+
+       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
         <div class="form-group">
           <label>Full Name *</label>
           <input type="text" id="tep_fullname" placeholder="Your legal full name">
@@ -1052,6 +1220,8 @@
   </div>
 </div>
 
+<script src="vendor/qrcode.min.js"></script>
+<script src="vendor/jsQR.min.js"></script>
 <script src="script.js"></script>
 </body>
 </html>
