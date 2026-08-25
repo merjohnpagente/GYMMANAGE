@@ -138,6 +138,18 @@
         return sec.auth().signOut().then(function(){return{ok:true,uid:uid,email:email};});
       }).catch(function(e){return{ok:false,error:self._mapAuthError(e),code:e&&e.code};});
     },
+    // Write a profile doc through the SECONDARY app's Firestore. Right after
+    // createUserCreds the secondary app is authenticated as the new user, so
+    // this write always passes security rules — even if the default app's
+    // follow-up sign-in fails. Guarantees registrations reach the cloud.
+    secSetDoc:function(col,doc){
+      if(!this.secondary)return Promise.resolve({ok:false});
+      try{
+        return this.secondary.firestore().collection(col).doc(doc.id).set(this._clean(doc))
+          .then(function(){return{ok:true};})
+          .catch(function(e){console.warn('[GMSFB] secSetDoc',col,e&&e.code);return{ok:false};});
+      }catch(e){console.warn('[GMSFB] secSetDoc',col,e);return Promise.resolve({ok:false});}
+    },
     createAdmin:function(username,pass,name){
       var self=this;var email=this.authEmailFor({username:username});
       return this.createUserCreds(email,pass).then(function(r){

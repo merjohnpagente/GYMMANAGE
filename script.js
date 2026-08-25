@@ -225,9 +225,18 @@ class AuthService{
     if(window.GMSFB&&GMSFB.enabled){
       const authEmail=GMSFB.authEmailFor({username:payload.username});
       const r=await GMSFB.createUserCreds(authEmail,password);
-      if(!r.ok)return{ok:false,error:r.error};
+      if(!r.ok){
+        // Auth account may exist from an earlier attempt whose profile never
+        // reached the cloud — recover by signing in with the given credentials.
+        if(r.code==='auth/email-already-in-use'){
+          const si=await GMSFB.signIn(authEmail,password);
+          if(!si.ok)return{ok:false,error:'Username already taken. Please choose a different username.'};
+        } else return{ok:false,error:r.error};
+      }
       user.authEmail=authEmail;
-      // Authenticate the default app so the profile write passes security rules
+      // Guaranteed cloud write via the secondary app's authenticated context
+      await GMSFB.secSetDoc('users',user);
+      // Authenticate the default app so the local cache push also passes rules
       const wasSignedIn=!!GMSFB.auth.currentUser;
       const si=await GMSFB.signIn(authEmail,password);
       if(si.ok)needSignOut=!wasSignedIn;
@@ -816,8 +825,14 @@ async function submitMemberSignup(){
   if(window.GMSFB&&GMSFB.enabled){
     authEmail=GMSFB.authEmailFor({email:v.email});
     const r=await GMSFB.createUserCreds(authEmail,v.pass);
-    if(!r.ok){err.textContent=r.error;err.style.display='block';return;}
-    // Authenticate the default app so the member write passes security rules
+    if(!r.ok){
+      if(r.code==='auth/email-already-in-use'){
+        // Recover earlier half-finished signups: verify the password they typed
+        const si=await GMSFB.signIn(authEmail,v.pass);
+        if(!si.ok){err.textContent='Email already registered. Please log in instead.';err.style.display='block';return;}
+      } else {err.textContent=r.error;err.style.display='block';return;}
+    }
+    // Authenticate the default app so the local cache push also passes rules
     const wasSignedIn=!!GMSFB.auth.currentUser;
     const si=await GMSFB.signIn(authEmail,v.pass);
     if(si.ok)needSignOut=!wasSignedIn;
@@ -827,7 +842,14 @@ async function submitMemberSignup(){
   const member={id,name:sanitizeText(v.name),username:v.uname,contact:v.contact,email:sanitizeText(v.email),planId,status:'pending_payment',startDate:'',expiryDate:'',planStart:'',qrToken:'',age:'',sex:'',address:'',ecName:'',ecNum:'',notes:'',createdAt:today(),createdBy:'Self',createdByUsername:v.uname,createdByRole:'member',bgCheckStatus:'Pending',bgCheckDate:'',bgCheckBy:'',bgCheckNotes:''};
   if(authEmail)member.authEmail=authEmail;else member.passwordHash=hashPassword(v.pass);
   Members.add(member);
-  pushPendingPaymentNotif(member);
+  const notif=pushPendingPaymentNotif(member);
+  // Guaranteed cloud writes via the secondary app (works even if the
+  // default-app sign-in above failed) — this is what makes the registration
+  // visible to the admin on every other device.
+  if(window.GMSFB&&GMSFB.enabled){
+    await GMSFB.secSetDoc('members',member);
+    if(notif)await GMSFB.secSetDoc('notifications',notif);
+  }
   logActivity('Signup','Member',v.name,'ID: '+id+' | Plan: '+(plan?plan.name:'')+' | Awaiting front-desk payment');
   if(needSignOut)GMSFB.signOut();
   _memberSignupPlanId=null;
