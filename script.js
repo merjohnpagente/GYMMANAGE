@@ -216,38 +216,33 @@ class AuthService{
     // Sanitize free-text fields at write time (defense in depth against stored XSS)
     ['name','contact','username','coachName','bio'].forEach(k=>{if(typeof rest[k]==='string')rest[k]=sanitizeText(rest[k]);});
     const user={id:uid(),role,status,createdAt:today(),...rest};
-    let needSignOut=false;
-    if(window.GMSFB&&GMSFB.enabled){
-      const authEmail=GMSFB.authEmailFor({username:payload.username});
-      const r=await GMSFB.createUserCreds(authEmail,password);
-      if(!r.ok){
-        // Auth account may exist from an earlier attempt whose profile never
-        // reached the cloud — recover by signing in with the given credentials.
-        if(r.code==='auth/email-already-in-use'){
-          const si=await GMSFB.signIn(authEmail,password);
-          if(!si.ok)return{ok:false,error:'Username already taken. Please choose a different username.'};
-        } else return{ok:false,error:r.error};
-      }
-      user.authEmail=authEmail;
-      // Guaranteed cloud write via the secondary app's authenticated context
-      const wr=await GMSFB.secSetDoc('users',user);
-      GMSFB.secondarySignOut();
-      if(!wr||!wr.ok){
-        // NEVER keep a cloud-bound registration as a local-only record — it
-        // would be invisible to admins on other devices. Fail loudly instead.
-        return{ok:false,error:'Registration could not reach the server. Please check your internet connection and try again.'};
-      }
-      // Authenticate the default app so the local cache push also passes rules
-      const wasSignedIn=!!GMSFB.auth.currentUser;
-      const si=await GMSFB.signIn(authEmail,password);
-      if(si.ok)needSignOut=!wasSignedIn;
-    } else {
-      // ONLINE-ONLY: never fall back to a device-local account.
+    // ---------- CLOUD-ONLY REGISTRATION ----------
+    // The profile doc is written straight to Firestore through the secondary
+    // app's authenticated context. Nothing is stored in localStorage here —
+    // every device (including this one) receives the record via the live
+    // snapshot, so Firebase stays the single source of truth.
+    if(!(window.GMSFB&&GMSFB.enabled)){
       if(window.GMSFB&&GMSFB.secondarySignOut)GMSFB.secondarySignOut();
       return{ok:false,error:'Registration requires an internet connection. Please connect to the internet and try again.'};
     }
-    Users.add(user);
-    if(needSignOut)GMSFB.signOut();
+    const authEmail=GMSFB.authEmailFor({username:payload.username});
+    const r=await GMSFB.createUserCreds(authEmail,password);
+    if(!r.ok){
+      // Auth account may exist from an earlier attempt whose profile never
+      // reached the cloud — recover by signing in with the given credentials.
+      if(r.code==='auth/email-already-in-use'){
+        const si=await GMSFB.signIn(authEmail,password);
+        if(!si.ok)return{ok:false,error:'Username already taken. Please choose a different username.'};
+      } else return{ok:false,error:r.error};
+    }
+    user.authEmail=authEmail;
+    const wr=await GMSFB.secSetDoc('users',user);
+    GMSFB.secondarySignOut();
+    if(!wr||!wr.ok){
+      // NEVER keep a cloud-bound registration as a local-only record — it
+      // would be invisible to admins on other devices. Fail loudly instead.
+      return{ok:false,error:'Registration could not reach the server. Please check your internet connection and try again.'};
+    }
     return{ok:true,user};
   }
 }
@@ -830,46 +825,46 @@ async function submitMemberSignup(){
   if(!planId){err.textContent='Please choose a plan first.';err.style.display='block';return;}
   const v=msValidateCredentials(err);
   if(!v)return;
-  // Online mode: create the Firebase Auth account (real email = login identity)
-  let authEmail=null;let needSignOut=false;
-  if(window.GMSFB&&GMSFB.enabled){
-    authEmail=GMSFB.authEmailFor({email:v.email});
-    const r=await GMSFB.createUserCreds(authEmail,v.pass);
-    if(!r.ok){
-      if(r.code==='auth/email-already-in-use'){
-        // Recover earlier half-finished signups: verify the password they typed
-        const si=await GMSFB.signIn(authEmail,v.pass);
-        if(!si.ok){err.textContent='Email already registered. Please log in instead.';err.style.display='block';return;}
-      } else {err.textContent=r.error;err.style.display='block';return;}
-    }
-    // Authenticate the default app so the local cache push also passes rules
-    const wasSignedIn=!!GMSFB.auth.currentUser;
-    const si=await GMSFB.signIn(authEmail,v.pass);
-    if(si.ok)needSignOut=!wasSignedIn;
+  // ---------- CLOUD-ONLY REGISTRATION ----------
+  // The member doc, the pending-payment notification and the activity entry
+  // are written straight to Firestore through the secondary app's
+  // authenticated context. Nothing is stored in localStorage here — the live
+  // snapshot delivers the new member to every device, including this one.
+  if(!(window.GMSFB&&GMSFB.enabled)){
+    err.textContent='Registration requires an internet connection. Please connect to the internet and try again.';err.style.display='block';return;
+  }
+  const authEmail=GMSFB.authEmailFor({email:v.email});
+  const r=await GMSFB.createUserCreds(authEmail,v.pass);
+  if(!r.ok){
+    if(r.code==='auth/email-already-in-use'){
+      // Recover earlier half-finished signups: verify the password they typed
+      const si=await GMSFB.signIn(authEmail,v.pass);
+      if(!si.ok){err.textContent='Email already registered. Please log in instead.';err.style.display='block';return;}
+    } else {err.textContent=r.error;err.style.display='block';return;}
   }
   const plan=planId?Plans.one(planId):null;
-  const id=nextMemberId();
-  const member={id,name:sanitizeText(v.name),username:v.uname,contact:v.contact,email:sanitizeText(v.email),planId,status:'pending_payment',startDate:'',expiryDate:'',planStart:'',qrToken:'',age:'',sex:'',address:'',ecName:'',ecNum:'',notes:'',createdAt:today(),createdBy:'Self',createdByUsername:v.uname,createdByRole:'member',bgCheckStatus:'Pending',bgCheckDate:'',bgCheckBy:'',bgCheckNotes:''};
-  if(authEmail)member.authEmail=authEmail;else member.passwordHash=hashPassword(v.pass);
-  Members.add(member);
-  const notif=pushPendingPaymentNotif(member);
-  // Guaranteed cloud writes via the secondary app (works even if the
-  // default-app sign-in above failed) — this is what makes the registration
-  // visible to the admin on every other device.
-  if(window.GMSFB&&GMSFB.enabled){
-    await GMSFB.secSetDoc('members',member);
-    if(notif)await GMSFB.secSetDoc('notifications',notif);
+  // Collision-safe ID: the local cache may be empty on guest devices, so also
+  // skip any ID that already exists in the cloud mirror.
+  let id=nextMemberId();
+  const cloudMembers=(window.GMSFB&&GMSFB._lastCloud&&GMSFB._lastCloud.members)||{};
+  while(cloudMembers[id])id='MEM-'+String(parseInt(id.split('-')[1],10)+1).padStart(4,'0');
+  const member={id,name:sanitizeText(v.name),username:v.uname,contact:v.contact,email:sanitizeText(v.email),planId,status:'pending_payment',startDate:'',expiryDate:'',planStart:'',qrToken:'',age:'',sex:'',address:'',ecName:'',ecNum:'',notes:'',createdAt:today(),createdBy:'Self',createdByUsername:v.uname,createdByRole:'member',bgCheckStatus:'Pending',bgCheckDate:'',bgCheckBy:'',bgCheckNotes:'',authEmail};
+  const wr=await GMSFB.secSetDoc('members',member);
+  if(!wr||!wr.ok){
     GMSFB.secondarySignOut();
+    err.textContent='Registration could not reach the server. Please check your internet connection and try again.';err.style.display='block';return;
   }
-  logActivity('Signup','Member',v.name,'ID: '+id+' | Plan: '+(plan?plan.name:'')+' | Awaiting front-desk payment');
-  if(needSignOut)GMSFB.signOut();
+  const notif={id:'NTF-'+uid(),memberId:member.id,planId:member.planId||'',type:'pending_payment',status:'open',createdAt:member.createdAt||today()};
+  await GMSFB.secSetDoc('notifications',notif);
+  const act={id:'ACT'+Date.now(),action:'Signup',category:'Member',detail:v.name,extra:'ID: '+id+' | Plan: '+(plan?plan.name:'')+' | Awaiting front-desk payment',by:v.name,byUsername:v.uname,byRole:'member',at:new Date().toISOString()};
+  await GMSFB.secSetDoc('activitylog',act);
+  GMSFB.secondarySignOut();
   _memberSignupPlanId=null;
   document.getElementById('msStep3').style.display='none';
   const done=document.getElementById('msDone');
   const msg=document.getElementById('msDoneMsg');
   if(msg)msg.textContent='Account registered! Please pay at the front desk (Cash or GCash) to activate your membership. You can log in once our staff confirms your payment.';
   if(done)done.style.display='block';
-  if(updatePendingBadge)updatePendingBadge();
 }
 function onRegRoleChange(val){}
 async function doRegister(){
@@ -3491,13 +3486,19 @@ function renderMsgThread(){
   const msgs=Messages.all().filter(m=>m.memberId===_msgThreadId).sort((a,b)=>a.ts-b.ts);
   const body=document.getElementById('messageModalBody');
   if(!body)return;
-  body.innerHTML=msgs.length?msgs.map(m=>`
-    <div style="display:flex;${m.direction==='in'?'':'justify-content:flex-end'};margin-bottom:10px">
-      <div style="max-width:80%;padding:10px 14px;border-radius:14px;font-size:13px;line-height:1.5;${m.direction==='in'?'background:rgba(255,255,255,.09);color:var(--gray-200);border-bottom-left-radius:3px':'background:linear-gradient(135deg,var(--orange),var(--orange-dark));color:#fff;border-bottom-right-radius:3px'}">
-        <div style="font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1px;opacity:.7;margin-bottom:3px">${m.direction==='in'?'Member':'Front Desk'} · ${formatDate(m.date)} ${esc(m.time||'')}</div>
+  body.innerHTML=msgs.length?msgs.map(m=>{
+    // Messenger layout: the viewer's OWN messages sit on the RIGHT (green),
+    // the other party's on the LEFT (dark) — in both the member view and the
+    // front-desk view.
+    const own=_msgStaffMode?m.direction==='out':m.direction==='in';
+    const who=m.direction==='in'?(m.memberName||'Member'):'Front Desk';
+    return `
+    <div class="msg-row${own?' own':' other'}">
+      <div class="msg-bubble">
+        <div class="msg-meta">${esc(who)} · ${formatDate(m.date)} ${esc(m.time||'')}</div>
         ${esc(m.text)}
       </div>
-    </div>`).join(''):`<div class="empty-state" style="padding:30px"><div class="empty-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><p>No messages yet</p><p class="empty-sub" style="font-size:12px;color:var(--gray-500)">${_msgStaffMode?'This member has not sent any messages.':'Send a message and the front desk will reply here.'}</p></div>`;
+    </div>`;}).join(''):`<div class="empty-state" style="padding:30px"><div class="empty-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><p>No messages yet</p><p class="empty-sub" style="font-size:12px;color:var(--gray-500)">${_msgStaffMode?'This member has not sent any messages.':'Send a message and the front desk will reply here.'}</p></div>`;
   body.scrollTop=body.scrollHeight;
 }
 function sendMessage(){

@@ -577,7 +577,7 @@
   <div class="modal-overlay" id="messageModal">
     <div class="modal">
       <div class="modal-head"><h2 id="messageModalTitle">Message the Gym</h2><button class="modal-close" onclick="closeModal('messageModal')">&#10005;</button></div>
-      <div class="modal-body" id="messageModalBody" style="max-height:52vh;overflow-y:auto"></div>
+      <div class="modal-body msg-thread" id="messageModalBody" style="max-height:52vh;overflow-y:auto"></div>
       <div class="modal-foot" style="gap:8px"><input type="text" id="msgInput" placeholder="Type your message…" style="flex:1;background:rgba(255,255,255,.05);border:1.5px solid rgba(255,255,255,.12);border-radius:10px;color:var(--white);padding:10px 14px;outline:none" onkeydown="if(event.key==='Enter')sendMessage()"><button class="btn-primary" style="width:auto" onclick="sendMessage()">Send</button></div>
     </div>
   </div>
@@ -1220,13 +1220,13 @@
   </div>
 </div>
 
-<script src="vendor/firebase-app-compat.js?v=8"></script>
-<script src="vendor/firebase-auth-compat.js?v=8"></script>
-<script src="vendor/firebase-firestore-compat.js?v=8"></script>
-<script src="firebase-config.js?v=8"></script>
-<script src="db-firebase.js?v=8"></script>
-<script src="vendor/qrcode.min.js?v=8"></script>
-<script src="vendor/jsQR.min.js?v=8"></script>
-<script src="script.js?v=8"></script>
+<script src="vendor/firebase-app-compat.js?v=9"></script>
+<script src="vendor/firebase-auth-compat.js?v=9"></script>
+<script src="vendor/firebase-firestore-compat.js?v=9"></script>
+<script src="firebase-config.js?v=9"></script>
+<script src="db-firebase.js?v=9"></script>
+<script src="vendor/qrcode.min.js?v=9"></script>
+<script src="vendor/jsQR.min.js?v=9"></script>
+<script src="script.js?v=9"></script>
 </body>
 </html>
