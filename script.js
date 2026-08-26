@@ -4878,11 +4878,22 @@ document.addEventListener('click',function(e){
 function printReport(){
   const output=document.getElementById('reportOutput');
   if(!output||!output.innerHTML.trim()){toast('Generate a report first.','error');return;}
-  const win=window.open('','_blank','width=900,height=700');
-  win.document.write(`<!DOCTYPE html><html><head><title>FitCore GMS — Report</title>
+  // Hidden iframe (same reliable approach as receipt printing) — pop-up
+  // blockers and mobile browsers often block or blank window.open().
+  const old=document.getElementById('reportPrintFrame');
+  if(old&&old.parentNode)old.parentNode.removeChild(old);
+  const frame=document.createElement('iframe');
+  frame.id='reportPrintFrame';
+  frame.setAttribute('aria-hidden','true');
+  frame.style.cssText='position:fixed;right:0;bottom:0;width:1px;height:1px;opacity:0;border:0;';
+  document.body.appendChild(frame);
+  const doc=frame.contentWindow.document;
+  doc.open();
+  doc.write(`<!DOCTYPE html><html><head><title>FitCore GMS — Report</title>
   <style>
   :root{--orange:#7ffa88;--orange-dark:#4ade80;--gold:#fbbf24;--green:#4ade80;--gray-300:#b3bcb5;--gray-500:#5e625f;--navy-900:#0a0a0a;--cyan:#b3bcb5}
   *{box-sizing:border-box}
+  @page{margin:12mm}
   body{font-family:'Segoe UI',Roboto,Arial,sans-serif;color:#0a0a0a;padding:0;margin:0;font-size:12.5px;background:#fff}
   .page{max-width:920px;margin:0 auto;padding:28px 32px}
   .print-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:14px;border-bottom:3px solid #7ffa88;margin-bottom:18px}
@@ -4937,11 +4948,17 @@ function printReport(){
     <div><strong>FitCore GMS</strong> &mdash; Gym Management System</div>
     <div>Printed ${new Date().toLocaleString()}</div>
   </div>
-  </div>
-  <script>window.onload=function(){window.print();}<\/script>
-  </body>
-</html>`);
-  win.document.close();
+  </div></body></html>`);
+  doc.close();
+  const printNow=function(){
+    try{
+      frame.contentWindow.focus();
+      frame.contentWindow.print();
+    }catch(e){toast('Print failed. Please try again.','error');}
+    setTimeout(function(){if(frame.parentNode)frame.parentNode.removeChild(frame);},60000);
+  };
+  if(doc.readyState==='complete')setTimeout(printNow,250);
+  else frame.onload=function(){setTimeout(printNow,250);};
 }
 // Neutralize spreadsheet formula injection: cells starting with = + - @ (or tab/CR) get a
 // leading apostrophe so Excel/Sheets treat them as text, not formulas.
