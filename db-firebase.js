@@ -171,6 +171,7 @@
     // ---------- auth helpers ----------
     adminAuthEmail:'admin1@fitcore.com',
     authEmailFor:function(u){
+      if(u&&u.authEmail)return String(u.authEmail).toLowerCase();
       if(u&&u.email)return String(u.email).toLowerCase();
       var un=(u&&u.username?u.username:'user').toLowerCase();
       return un+AUTH_DOMAIN_SUFFIX;

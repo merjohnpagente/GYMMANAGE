@@ -200,6 +200,43 @@ class AuthService{
           return{ok:true,user:admin};
         }
       }
+      // ---------- CACHE-MISS FALLBACK ----------
+      // Registration is cloud-only, so a freshly registered account may not
+      // be in this device's local cache yet (Firestore denies reads before
+      // anyone signs in). Validate directly against Firebase Auth using the
+      // deterministic identity, then pull the profile from the live snapshot.
+      const uname=username.toLowerCase();
+      const synth=uname+'@fitcoregym.local';
+      const finishFallback=async()=>{
+        await GMSFB.waitForSnap('users',4000);
+        await GMSFB.waitForSnap('members',4000);
+        const u=Users.all().find(x=>(x.authEmail&&x.authEmail.toLowerCase()===synth)||(x.username&&x.username.toLowerCase()===uname&&x.role!=='member'));
+        if(u){
+          if(u.status==='pending'){GMSFB.signOut();return{ok:false,error:'Your account is pending admin approval. Please wait.'};}
+          if(u.status==='locked'){GMSFB.signOut();return{ok:false,error:'Account locked. Please contact the administrator.'};}
+          LoginAttempts.reset(username);
+          if(u.role==='admin')GMSFB.ensureSeededPlans();
+          this.setSession(u);
+          return{ok:true,user:u};
+        }
+        const m=Members.all().find(x=>(x.authEmail&&x.authEmail.toLowerCase()===synth)||(x.username&&x.username.toLowerCase()===uname)||(x.email&&x.email.toLowerCase()===uname));
+        if(m){
+          if(m.status==='Archived'){GMSFB.signOut();return{ok:false,error:'Your account has been archived. Please contact the front desk.'};}
+          LoginAttempts.reset(username);
+          const sess={id:m.id,email:m.email||'',username:m.username,name:m.name,contact:m.contact,role:'member',memberId:m.id,status:m.status};
+          this.setSession(sess);
+          return{ok:true,user:sess};
+        }
+        GMSFB.signOut();
+        return{ok:false,error:'Invalid username or password.'};
+      };
+      let fr=await GMSFB.signIn(synth,password);
+      if(fr.ok)return await finishFallback();
+      if(username.indexOf('@')>-1){
+        fr=await GMSFB.signIn(uname,password);
+        if(fr.ok)return await finishFallback();
+      }
+      LoginAttempts.register(username);
       return{ok:false,error:'Invalid username or password.'};
     }
     // ---------- ONLINE-ONLY ----------
@@ -840,7 +877,10 @@ async function submitMemberSignup(){
   if(!(window.GMSFB&&GMSFB.enabled)){
     err.textContent='Registration requires an internet connection. Please connect to the internet and try again.';err.style.display='block';return;
   }
-  const authEmail=GMSFB.authEmailFor({email:v.email});
+  // Auth identity = synthetic username email, so the account can log in with
+  // its USERNAME on ANY device (the real email stays as contact info and as a
+  // fallback login hint). The member doc keeps authEmail for the fast path.
+  const authEmail=GMSFB.authEmailFor({username:v.uname});
   const r=await GMSFB.createUserCreds(authEmail,v.pass);
   if(!r.ok){
     if(r.code==='auth/email-already-in-use'){
