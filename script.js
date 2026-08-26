@@ -683,6 +683,7 @@ function populateMsPlanSelect(selectedId){
   const sel=document.getElementById('msPlanSelect');
   const opts=document.getElementById('msPlanOptions');
   if(!sel||!opts)return;
+  if(!Plans.all().length&&window.GMSFB&&GMSFB.enabled&&typeof GMSFB.ensureSeededPlans==='function')GMSFB.ensureSeededPlans();
   const plans=Plans.all().filter(p=>p.status==='Active');
   sel.innerHTML=plans.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
   const pick=plans.find(p=>p.id===selectedId)?selectedId:(plans.length?plans[0].id:'');
@@ -4256,6 +4257,7 @@ function savePlan(){
 function renderExplorePlans(){
   const container=document.getElementById('exploreCardsContainer');
   if(!container)return;
+  if(!Plans.all().length&&window.GMSFB&&GMSFB.enabled&&typeof GMSFB.ensureSeededPlans==='function')GMSFB.ensureSeededPlans();
   const plans=Plans.all().filter(p=>p.status==='Active');
   const badges=['Starter','Popular','Best Value','Elite','Premium','Top Pick'];
   const featuredIdx=1; // second plan is "featured" (orange border)

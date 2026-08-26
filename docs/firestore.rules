@@ -14,21 +14,33 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // Public catalogue: guests visiting the landing page / member signup
+    // must be able to see the membership plans and the walk-in day rate
+    // WITHOUT signing in. Writes still require authentication.
+    match /plans/{doc} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+    match /settings/{doc} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
     // App collections: any signed-in user may read;
     // writes require authentication too (roles enforced in app logic).
     match /{collection}/{doc} {
       allow read: if request.auth != null
-        && collection in ['users','members','payments','sessions','plans',
+        && collection in ['users','members','payments','sessions',
                           'attendance','walkins','notifications','messages',
-                          'announcements','settings','activitylog'];
+                          'announcements','activitylog'];
       allow create, update: if request.auth != null
-        && collection in ['users','members','payments','sessions','plans',
+        && collection in ['users','members','payments','sessions',
                           'attendance','walkins','notifications','messages',
-                          'announcements','settings','activitylog'];
+                          'announcements','activitylog'];
       allow delete: if request.auth != null
-        && collection in ['users','members','payments','sessions','plans',
+        && collection in ['users','members','payments','sessions',
                           'attendance','walkins','notifications','messages',
-                          'announcements','settings','activitylog'];
+                          'announcements','activitylog'];
     }
 
     // Everything else: denied

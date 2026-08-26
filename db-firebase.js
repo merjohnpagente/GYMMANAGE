@@ -56,7 +56,15 @@
           function(snap){delete self._syncErr[COLMAP[key]];self._onSnap(key,snap);},
           function(err){
             console.warn('[GMSFB] snapshot',COLMAP[key],err.code);
-            if((err&&err.code)==='permission-denied'&&!self.auth.currentUser)return;
+            if((err&&err.code)==='permission-denied'&&!self.auth.currentUser){
+              // Guest device (nobody signed in): the rules keep personal
+              // collections private, but plans must still render so the
+              // landing page and member signup work. Seed the local default
+              // catalogue; once the public-read rules are live the snapshot
+              // delivers the real cloud plans anyway.
+              if(COLMAP[key]==='plans')self.ensureSeededPlans();
+              return;
+            }
             self._syncErr[COLMAP[key]]=(err&&err.code)||'error';
             if(typeof updateSyncWarning==='function')updateSyncWarning();
           });
@@ -112,7 +120,12 @@
       try{
         if(storageKey==='gms_plans'){
           var arr=[];try{arr=JSON.parse(localStorage.getItem('gms_plans'))||[];}catch(e){}
-          if(!arr.length)this.ensureSeededPlans();
+          if(!arr.length){
+            // Empty snapshot arrived: clear the seed latch so the default
+            // catalogue can be (re)seeded and pickers never stay blank.
+            this._plansSeedTried=false;
+            this.ensureSeededPlans();
+          }
           if(typeof renderExplorePlans==='function')renderExplorePlans();
           var mo=document.getElementById('memberSignup');
           if(mo&&mo.style.display!=='none'&&typeof populateMsPlanSelect==='function'){
@@ -220,6 +233,8 @@
       // on the network; the live snapshot then reconciles with cloud truth.
       try{localStorage.setItem('gms_plans',JSON.stringify(defaults));}catch(e){}
       if(typeof renderExplorePlans==='function')renderExplorePlans();
+      var mo=document.getElementById('memberSignup');
+      if(mo&&mo.style.display!=='none'&&typeof populateMsPlanSelect==='function')populateMsPlanSelect();
       // Cloud write requires an authenticated session (firestore.rules).
       if(!this.auth||!this.auth.currentUser)return;
       var self=this;var batch=this.db.batch();
