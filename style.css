@@ -262,6 +262,11 @@ tbody td{padding:11px 14px;color:var(--gray-300);font-size:13px;vertical-align:m
 .msg-row.other .msg-bubble{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);color:var(--gray-300);border-bottom-left-radius:4px}
 .msg-meta{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1px;opacity:.62;margin-bottom:3px}
 @keyframes msgIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+/* Delete message control (hover reveal) */
+.msg-row{align-items:center}
+.msg-del{opacity:0;transition:.15s;background:none;border:none;color:var(--gray-500);cursor:pointer;font-size:12px;line-height:1;padding:4px 7px;border-radius:6px;flex-shrink:0}
+.msg-row:hover .msg-del{opacity:.85}
+.msg-del:hover{color:var(--red);background:rgba(239,68,68,.12);opacity:1}
 /* Chat modal: input and Send always share one row (overrides the mobile
    column-reverse stacking applied to generic modal feet) */
 #messageModal .modal-foot{flex-direction:row!important;align-items:center;gap:8px}

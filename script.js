@@ -3547,7 +3547,7 @@ function renderMsgThread(){
       <div class="msg-bubble">
         <div class="msg-meta">${esc(who)} · ${formatDate(m.date)} ${esc(m.time||'')}</div>
         ${esc(m.text)}
-      </div>
+      </div>${_msgStaffMode?`<button class="msg-del" title="Delete message" onclick="deleteMsg('${m.id}')">&#10005;</button>`:''}
     </div>`;}).join(''):`<div class="empty-state" style="padding:30px"><div class="empty-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><p>No messages yet</p><p class="empty-sub" style="font-size:12px;color:var(--gray-500)">${_msgStaffMode?'This member has not sent any messages.':'Send a message and the front desk will reply here.'}</p></div>`;
   body.scrollTop=body.scrollHeight;
 }
@@ -3586,8 +3586,25 @@ function myMsgBubble(m){
     <div class="msg-bubble">
       <div class="msg-meta">${esc(who)} · ${formatDate(m.date)} ${esc(m.time||'')}</div>
       ${esc(m.text)}
-    </div>
+    </div>${own?`<button class="msg-del" title="Delete message" onclick="deleteMsg('${m.id}')">&#10005;</button>`:''}
   </div>`;
+}
+// Delete a chat message. Members may only delete their own; admin/staff may
+// moderate (delete any) from the front-desk thread view.
+function deleteMsg(id){
+  const msg=Messages.one(id);
+  if(!msg)return;
+  const memberOwnsIt=currentUser&&currentUser.role==='member'&&msg.direction==='in'&&msg.memberId===(currentUser.memberId||currentUser.id);
+  const staffAllowed=currentUser&&(currentUser.role==='admin'||currentUser.role==='staff');
+  if(!memberOwnsIt&&!staffAllowed){toast('You can only delete your own messages.','error');return;}
+  openConfirm('Delete Message','Delete this message? This cannot be undone.',function(){
+    Messages.remove(id);
+    const pg=document.getElementById('panelMyMessages');
+    if(pg&&pg.classList.contains('active'))renderMyMessages();
+    if(_msgThreadId){renderMsgThread();if(typeof renderMessages==='function'&&document.getElementById('panelMessages'))renderMessages();}
+    updateMessageBadge();
+    toast('Message deleted.');
+  },'Delete','btn-danger');
 }
 function renderMyMessages(){
   const el=document.getElementById('panelMyMessages');
