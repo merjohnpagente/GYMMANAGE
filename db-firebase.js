@@ -23,7 +23,7 @@
   var AUTH_DOMAIN_SUFFIX='@fitcoregym.local';
   var GMSFB={
     enabled:true, ready:false, _applying:false,
-    _lastCloud:{}, _listeners:[], _syncErr:{},
+    _lastCloud:{}, _listeners:[], _syncErr:{}, _listenersStarted:false, _unsubs:[],
     // ---------- bootstrap ----------
     init:function(){
       try{
@@ -34,18 +34,42 @@
         // Secondary app: creating accounts must NOT kick the admin out of their session
         this.secondary=(firebase.apps.find(function(a){return a.name==='gms-admin-tasks';})
           ||firebase.initializeApp(window.FIREBASE_CONFIG,'gms-admin-tasks'));
-        var self=this;
-        Object.keys(COLMAP).forEach(function(key){
-          self.db.collection(COLMAP[key]).onSnapshot(
-            function(snap){delete self._syncErr[COLMAP[key]];self._onSnap(key,snap);},
-            function(err){
-              console.warn('[GMSFB] snapshot',COLMAP[key],err.code);
-              self._syncErr[COLMAP[key]]=(err&&err.code)||'error';
-              if(typeof updateSyncWarning==='function')updateSyncWarning();
-            });
-        });
         this.ready=true;
+        var self=this;
+        // Re-attach fresh listeners whenever the signed-in identity changes
+        // (login, logout, registration flows). A failed listener never
+        // recovers by itself, so every auth change gets clean new ones.
+        this.auth.onAuthStateChanged(function(){self.restartListeners();});
+        this.startListeners();
       }catch(e){console.error('[GMSFB] init failed',e);this.enabled=false;}
+    },
+    // ---------- live listeners ----------
+    // Listeners are (re)started on every auth state change (see init).
+    // Before anyone signs in, Firestore denies reads — that is expected and
+    // must NOT mark the device degraded.
+    startListeners:function(){
+      if(this._listenersStarted||!this.ready)return;
+      this._listenersStarted=true;
+      var self=this;
+      Object.keys(COLMAP).forEach(function(key){
+        var un=self.db.collection(COLMAP[key]).onSnapshot(
+          function(snap){delete self._syncErr[COLMAP[key]];self._onSnap(key,snap);},
+          function(err){
+            console.warn('[GMSFB] snapshot',COLMAP[key],err.code);
+            if((err&&err.code)==='permission-denied'&&!self.auth.currentUser)return;
+            self._syncErr[COLMAP[key]]=(err&&err.code)||'error';
+            if(typeof updateSyncWarning==='function')updateSyncWarning();
+          });
+        self._unsubs.push(un);
+      });
+    },
+    stopListeners:function(){
+      this._unsubs.forEach(function(u){try{u();}catch(e){}});
+      this._unsubs=[];this._listenersStarted=false;
+    },
+    restartListeners:function(){
+      this.stopListeners();this._syncErr={};
+      this.startListeners();
     },
     // ---------- one-time fresh start on this device ----------
     bootstrapLocal:function(){
@@ -132,7 +156,7 @@
       return c;
     },
     // ---------- auth helpers ----------
-    adminAuthEmail:'admin@fitcoregym.local',
+    adminAuthEmail:'admin1@fitcore.com',
     authEmailFor:function(u){
       if(u&&u.email)return String(u.email).toLowerCase();
       var un=(u&&u.username?u.username:'user').toLowerCase();
@@ -173,6 +197,34 @@
           .then(function(){return{ok:true};})
           .catch(function(e){console.warn('[GMSFB] secSetDoc',col,e&&e.code);return{ok:false};});
       }catch(e){console.warn('[GMSFB] secSetDoc',col,e);return Promise.resolve({ok:false});}
+    },
+    // Sign the PRIMARY app out (used on logout and after registration flows
+    // that had to authenticate the default app as a freshly created user).
+    signOut:function(){try{if(this.auth)this.auth.signOut();}catch(e){}},
+    // ---------- default plan seeding ----------
+    // Seeds the default plan catalogue once when the plans collection is
+    // empty. Called right after a successful ADMIN sign-in or when an empty
+    // plans snapshot arrives. Stores NO password anywhere: the cloud write
+    // simply runs under whoever is authenticated, as the rules require.
+    ensureSeededPlans:function(){
+      if(this._plansSeedTried)return;
+      var plans=[];try{plans=JSON.parse(localStorage.getItem('gms_plans'))||[];}catch(e){}
+      if(plans.length){this._plansSeedTried=true;return;}
+      this._plansSeedTried=true;
+      var defaults=[
+        {id:'pl1',name:'Basic',price:500,duration:1,sessions:8,benefits:'Gym access\nLocker use',status:'Active'},
+        {id:'pl2',name:'Standard',price:900,duration:1,sessions:16,benefits:'Gym access\nLocker use\n1 trainer session',status:'Active'},
+        {id:'pl3',name:'Premium',price:1500,duration:3,sessions:'Unlimited',benefits:'Full access\nPriority trainer\nFree assessment',status:'Active'}
+      ];
+      // Seed the local mirror first so plan pickers render without waiting
+      // on the network; the live snapshot then reconciles with cloud truth.
+      try{localStorage.setItem('gms_plans',JSON.stringify(defaults));}catch(e){}
+      if(typeof renderExplorePlans==='function')renderExplorePlans();
+      // Cloud write requires an authenticated session (firestore.rules).
+      if(!this.auth||!this.auth.currentUser)return;
+      var self=this;var batch=this.db.batch();
+      defaults.forEach(function(p){batch.set(self.db.collection('plans').doc(p.id),p);});
+      batch.commit().catch(function(e){console.warn('[GMSFB] plan seed',e&&e.code);});
     },
   };
   window.GMSFB=GMSFB;

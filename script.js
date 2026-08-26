@@ -526,11 +526,17 @@ async function doLogin(){
   const p=document.getElementById('loginPass').value;
   const btn=document.querySelector('#loginForm .btn-primary');
   if(btn){btn.disabled=true;btn.textContent='Logging in…';}
-  const result=await Auth.login(u,p);
-  if(btn){btn.disabled=false;btn.textContent='Log In';}
-  if(!result.ok){showLoginError(result.error);return;}
-  currentUser=result.user;
-  loadApp();
+  try{
+    const result=await Auth.login(u,p);
+    if(!result.ok){showLoginError(result.error);return;}
+    currentUser=result.user;
+    loadApp();
+  }catch(e){
+    console.error('[login]',e);
+    showLoginError('Login failed. Please refresh the page (Ctrl+F5) and try again.');
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='Log In';}
+  }
 }
 
 function confirmLogout(){
