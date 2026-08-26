@@ -4003,15 +4003,25 @@ function refreshWalkinTable(){
     <div style="overflow-x:auto"><table><thead><tr><th>ID</th><th>Visitor Name</th><th>Date</th><th>Time</th><th>Fee</th><th>Recorded By</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>${pag}`;
 }
 // ======================================================================
-// RECEIPT PRINT / PDF EXPORT (receipt-only clean sheet)
+// RECEIPT PRINT (receipt-only clean sheet via hidden iframe)
 // ======================================================================
 function printReceipt(){
   const node=document.querySelector('#receiptBody .receipt');
-  if(!node){toast('No receipt to export.','error');return;}
-  const win=window.open('','_blank','width=560,height=760');
-  if(!win){toast('Please allow pop-ups to print or download the receipt.','error');return;}
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>FitCore Receipt</title><style>
+  if(!node){toast('No receipt to print.','error');return;}
+  // Hidden iframe instead of window.open(): pop-up blockers and mobile
+  // browsers frequently block or blank the old pop-up approach.
+  const old=document.getElementById('rcPrintFrame');
+  if(old&&old.parentNode)old.parentNode.removeChild(old);
+  const frame=document.createElement('iframe');
+  frame.id='rcPrintFrame';
+  frame.setAttribute('aria-hidden','true');
+  frame.style.cssText='position:fixed;right:0;bottom:0;width:1px;height:1px;opacity:0;border:0;';
+  document.body.appendChild(frame);
+  const doc=frame.contentWindow.document;
+  doc.open();
+  doc.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>FitCore Receipt</title><style>
   *{box-sizing:border-box;margin:0;padding:0}
+  @page{margin:12mm}
   body{font-family:'Roboto','Segoe UI',Arial,sans-serif;background:#fff;color:#0a0a0a;padding:26px;display:flex;justify-content:center;font-size:14px;line-height:1.5}
   .sheet{width:100%;max-width:430px}
   .receipt{background:#fff;color:#0a0a0a;padding:30px 28px 22px;border-radius:18px;position:relative;overflow:hidden;width:100%;border:1px solid #e6ebf4}
@@ -4047,9 +4057,16 @@ function printReceipt(){
     .receipt::before{-webkit-print-color-adjust:exact;print-color-adjust:exact}
   }
   </style></head><body><div class="sheet">${node.outerHTML}</div></body></html>`);
-  win.document.close();
-  win.focus();
-  setTimeout(function(){try{win.print();}catch(e){}},300);
+  doc.close();
+  const printNow=function(){
+    try{
+      frame.contentWindow.focus();
+      frame.contentWindow.print();
+    }catch(e){toast('Print failed. Please try again.','error');}
+    setTimeout(function(){if(frame.parentNode)frame.parentNode.removeChild(frame);},60000);
+  };
+  if(doc.readyState==='complete')setTimeout(printNow,200);
+  else frame.onload=function(){setTimeout(printNow,200);};
 }
 function viewWalkinReceipt(id){
   const w=Walkins.all().find(x=>x.id===id);if(!w)return;
