@@ -229,14 +229,21 @@ class AuthService{
     const r=await GMSFB.createUserCreds(authEmail,password);
     if(!r.ok){
       // Auth account may exist from an earlier attempt whose profile never
-      // reached the cloud — recover by signing in with the given credentials.
+      // reached the cloud — recover by verifying the password on the SECONDARY
+      // app (the context secSetDoc writes through).
       if(r.code==='auth/email-already-in-use'){
-        const si=await GMSFB.signIn(authEmail,password);
+        const si=await GMSFB.secSignIn(authEmail,password);
         if(!si.ok)return{ok:false,error:'Username already taken. Please choose a different username.'};
       } else return{ok:false,error:r.error};
     }
     user.authEmail=authEmail;
     const wr=await GMSFB.secSetDoc('users',user);
+    // Activity entry (same as member signup) so admins see the pending
+    // registration in Reports even before approving it.
+    if(wr&&wr.ok){
+      const act={id:'ACT'+Date.now(),action:'Signup',category:role==='trainer'?'Trainer':'Staff',detail:rest.name||payload.username,extra:'ID: '+user.id+' | Awaiting admin approval',by:rest.name||payload.username,byUsername:payload.username,byRole:role,at:new Date().toISOString()};
+      await GMSFB.secSetDoc('activitylog',act);
+    }
     GMSFB.secondarySignOut();
     if(!wr||!wr.ok){
       // NEVER keep a cloud-bound registration as a local-only record — it
@@ -837,8 +844,9 @@ async function submitMemberSignup(){
   const r=await GMSFB.createUserCreds(authEmail,v.pass);
   if(!r.ok){
     if(r.code==='auth/email-already-in-use'){
-      // Recover earlier half-finished signups: verify the password they typed
-      const si=await GMSFB.signIn(authEmail,v.pass);
+      // Recover earlier half-finished signups: verify the password on the
+      // SECONDARY app (the context secSetDoc writes through).
+      const si=await GMSFB.secSignIn(authEmail,v.pass);
       if(!si.ok){err.textContent='Email already registered. Please log in instead.';err.style.display='block';return;}
     } else {err.textContent=r.error;err.style.display='block';return;}
   }
@@ -1032,6 +1040,7 @@ function buildSidebar(){
     {id:'dashboard',group:'Overview',icon:`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>`,label:'Dashboard',roles:['admin','staff','trainer','member']},
     {id:'myqr',group:'Membership',icon:`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><path d="M21 21h-3v-3h3z"/></svg>`,label:'My QR Code',roles:['member']},
     {id:'myattendance',group:'Membership',icon:`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,label:'My Attendance',roles:['member']},
+    {id:'myMessages',group:'Support',icon:`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,label:'Messages',roles:['member'],badge:'myMsgBadge'},
     {id:'members',group:'Management',icon:`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,label:'Members',roles:['admin','staff']},
     {id:'history',group:'Management',icon:`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><polyline points="12 7 12 12 15 14"/></svg>`,label:'Member History',roles:['admin','staff']},
     {id:'queue',group:'Management',icon:`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,label:'Payment Queue',roles:['admin','staff'],badge:'queueBadge'},
@@ -1083,14 +1092,14 @@ function startClock(){
   _clockInterval=setInterval(tick,1000);
 }
 let _lastPanel=null;
-const PANEL_ROLES={myqr:['member'],myattendance:['member'],members:['admin','staff'],history:['admin','staff'],queue:['admin','staff'],billing:['admin','staff'],walkin:['admin','staff'],schedule:['admin','staff','trainer'],scanner:['admin','staff'],notifications:['admin','staff'],messages:['admin','staff'],announcements:['admin','staff'],plans:['admin','staff'],reports:['admin','staff'],users:['admin'],myassigned:['trainer']};
+const PANEL_ROLES={myqr:['member'],myattendance:['member'],myMessages:['member'],members:['admin','staff'],history:['admin','staff'],queue:['admin','staff'],billing:['admin','staff'],walkin:['admin','staff'],schedule:['admin','staff','trainer'],scanner:['admin','staff'],notifications:['admin','staff'],messages:['admin','staff'],announcements:['admin','staff'],plans:['admin','staff'],reports:['admin','staff'],users:['admin'],myassigned:['trainer']};
 function navigate(panel){
   if(currentUser&&PANEL_ROLES[panel]&&!PANEL_ROLES[panel].includes(currentUser.role)){toast('You do not have access to this section.','error');return;}
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   const ni=document.getElementById('nav-'+panel);
   if(ni)ni.classList.add('active');
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
-  const titles={dashboard:'Dashboard',members:'Member Management',history:'Member History',billing:'Billing & Payments',walkin:'Walk-In Management',schedule:'Trainer Schedule',notifications:'Member Renewals',messages:'Member Messages',plans:'Membership Plans',reports:'Reports',users:'User Management',queue:'Payment Queue',scanner:'QR Scanner',myqr:'My QR Code',myattendance:'My Attendance',myassigned:'My Assigned Members'};
+  const titles={dashboard:'Dashboard',members:'Member Management',history:'Member History',billing:'Billing & Payments',walkin:'Walk-In Management',schedule:'Trainer Schedule',notifications:'Member Renewals',messages:'Member Messages',plans:'Membership Plans',reports:'Reports',users:'User Management',queue:'Payment Queue',scanner:'QR Scanner',myqr:'My QR Code',myattendance:'My Attendance',myassigned:'My Assigned Members',myMessages:'Message the Gym'};
   document.getElementById('pageTitle').textContent=titles[panel]||'';
   const panelEl=document.getElementById('panel'+capitalize(panel));
   if(panelEl)panelEl.classList.add('active');
@@ -1313,7 +1322,7 @@ function updateSyncWarning(){
 
 // ============================= PANEL ROUTER =============================
 function renderPanel(p){
-  const map={dashboard:renderDashboard,members:renderMembers,history:renderHistory,billing:renderBilling,walkin:renderWalkin,schedule:renderSchedule,notifications:renderNotifications,renewed:renderRenewed,messages:renderMessages,announcements:renderAnnouncements,plans:renderPlans,reports:renderReports,users:renderUsers,queue:renderQueue,scanner:renderScanner,myqr:renderMyQr,myattendance:renderMyAttendance,myassigned:renderMyAssigned};
+  const map={dashboard:renderDashboard,members:renderMembers,history:renderHistory,billing:renderBilling,walkin:renderWalkin,schedule:renderSchedule,notifications:renderNotifications,renewed:renderRenewed,messages:renderMessages,announcements:renderAnnouncements,plans:renderPlans,reports:renderReports,users:renderUsers,queue:renderQueue,scanner:renderScanner,myqr:renderMyQr,myattendance:renderMyAttendance,myassigned:renderMyAssigned,myMessages:renderMyMessages};
   if(map[p])map[p]();
   iconize(document.getElementById('panel'+p.charAt(0).toUpperCase()+p.slice(1)));
 }
@@ -1656,7 +1665,7 @@ function buildMemberDashboard(){
     <div class="mb-help-msg">Payments, renewals &amp; plan changes are handled at the front desk.</div>
     <div class="mb-help-actions">
       <a class="btn-secondary btn-sm" href="tel:+639150435696">📞 Call Front Desk</a>
-      <button class="btn-secondary btn-sm" onclick="openMemberMessageModal()" style="cursor:pointer"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Message the Gym</button>
+      <button class="btn-secondary btn-sm" onclick="navigate('myMessages')" style="cursor:pointer"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Message the Gym</button>
     </div>
   </div>`;
   const changePlan=(mem.status==='pending_payment')?`
@@ -3460,6 +3469,7 @@ function updateMessageBadge(){
   const n=Messages.all().filter(m=>m.direction==='in'&&!m.read).length;
   const b=document.getElementById('msgBadge');
   if(b){b.style.display=n?'flex':'none';b.textContent=n;}
+  if(typeof updateMyBadges==='function')updateMyBadges();
 }
 function openMemberMessageModal(){
   const mem=Members.one(currentUser.memberId||currentUser.id);
@@ -3511,6 +3521,75 @@ function sendMessage(){
   input.value='';
   renderMsgThread();updateMessageBadge();
   if(_msgStaffMode&&document.getElementById('panelMessages'))renderMessages();
+  toast('Message sent.');
+}
+
+// ======================================================================
+// MEMBER PAGES: MESSAGE THE GYM + NOTIFICATIONS (full-page Messenger)
+// ======================================================================
+function myUnreadReplies(){
+  if(!currentUser||currentUser.role!=='member')return 0;
+  const mid=currentUser.memberId||currentUser.id;
+  return Messages.all().filter(m=>m.memberId===mid&&m.direction==='out'&&!m.readByMember).length;
+}
+function updateMyBadges(){
+  if(!currentUser||currentUser.role!=='member')return;
+  const replies=myUnreadReplies();
+  const mb=document.getElementById('myMsgBadge');
+  if(mb){mb.style.display=replies?'flex':'none';mb.textContent=replies;}
+}
+function myMsgBubble(m){
+  const own=m.direction==='in';
+  const who=m.direction==='in'?(m.memberName||'Member'):'Front Desk';
+  return `
+  <div class="msg-row${own?' own':' other'}">
+    <div class="msg-bubble">
+      <div class="msg-meta">${esc(who)} · ${formatDate(m.date)} ${esc(m.time||'')}</div>
+      ${esc(m.text)}
+    </div>
+  </div>`;
+}
+function renderMyMessages(){
+  const el=document.getElementById('panelMyMessages');
+  if(!el)return;
+  const mid=currentUser.memberId||currentUser.id;
+  const mem=Members.one(mid);
+  const all=Messages.all();
+  let changed=false;
+  all.forEach(m=>{if(m.memberId===mid&&m.direction==='out'&&!m.readByMember){m.readByMember=true;changed=true;}});
+  if(changed)Messages.save(all);
+  const msgs=all.filter(m=>m.memberId===mid).sort((a,b)=>a.ts-b.ts);
+  el.innerHTML=`
+  <div class="mychat">
+    <div class="mychat-head">
+      <div class="mychat-avatar"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg></div>
+      <div class="mychat-id">
+        <div class="mychat-name">Front Desk <span class="online-dot" title="Online"></span></div>
+        <div class="mychat-sub">FitCore Gym${mem?' · '+esc(mem.name):''} — replies appear here instantly</div>
+      </div>
+    </div>
+    <div class="mychat-thread" id="myChatThread">
+      ${msgs.length?msgs.map(myMsgBubble).join(''):`<div class="empty-state" style="padding:40px 20px"><div class="empty-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><p>No messages yet</p><p class="empty-sub" style="font-size:12px;color:var(--gray-500)">Send a message below and the front desk will reply here.</p></div>`}
+    </div>
+    <div class="mychat-inputrow">
+      <input id="myMsgInput" placeholder="Type your message…" maxlength="500" onkeydown="if(event.key==='Enter')sendMyMessage()">
+      <button class="btn-primary" onclick="sendMyMessage()">Send</button>
+    </div>
+  </div>`;
+  const t=document.getElementById('myChatThread');
+  if(t)t.scrollTop=t.scrollHeight;
+  updateMyBadges();
+}
+function sendMyMessage(){
+  const input=document.getElementById('myMsgInput');
+  const text=(input?input.value:'').trim();
+  if(!text)return;
+  const mid=currentUser.memberId||currentUser.id;
+  const mem=Members.one(mid);
+  Messages.add({id:'MSG'+uid(),memberId:mid,memberName:mem?mem.name:'Member',text,time:new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}),date:today(),ts:Date.now(),direction:'in',read:false});
+  logActivity('Message','Member',mem?mem.name:'Member',text);
+  if(input)input.value='';
+  renderMyMessages();
   toast('Message sent.');
 }
 function renderMessages(){

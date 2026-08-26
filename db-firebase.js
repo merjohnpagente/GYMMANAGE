@@ -199,6 +199,16 @@
       }).catch(function(e){return{ok:false,error:self._mapAuthError(e),code:e&&e.code};});
     },
     secondarySignOut:function(){try{if(this.secondary)this.secondary.auth().signOut();}catch(e){}},
+    // Sign the SECONDARY app in. Used by registration recovery: when the Auth
+    // account already exists (half-finished signup), verifying the password on
+    // the secondary app re-authenticates the context that secSetDoc writes
+    // through — so the profile doc still reaches the cloud.
+    secSignIn:function(email,pass){
+      if(!this.secondary)return Promise.resolve({ok:false});
+      return this.secondary.auth().signInWithEmailAndPassword(email,pass)
+        .then(function(){return{ok:true};})
+        .catch(function(e){return{ok:false,code:e&&e.code};});
+    },
     // Write a profile doc through the SECONDARY app's Firestore. Right after
     // createUserCreds the secondary app is authenticated as the new user, so
     // this write always passes security rules — on any device. Guarantees

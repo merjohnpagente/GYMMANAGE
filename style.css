@@ -262,6 +262,37 @@ tbody td{padding:11px 14px;color:var(--gray-300);font-size:13px;vertical-align:m
 .msg-row.other .msg-bubble{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);color:var(--gray-300);border-bottom-left-radius:4px}
 .msg-meta{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1px;opacity:.62;margin-bottom:3px}
 @keyframes msgIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+/* Chat modal: input and Send always share one row (overrides the mobile
+   column-reverse stacking applied to generic modal feet) */
+#messageModal .modal-foot{flex-direction:row!important;align-items:center;gap:8px}
+#messageModal .modal-foot .btn-primary,#messageModal .modal-foot .btn-secondary{width:auto!important;flex-shrink:0;padding:10px 22px}
+#messageModal .modal-foot input{flex:1;min-width:0;width:auto!important}
+/* ---- Member "Message the Gym" page (Messenger layout) ---- */
+.mychat{background:var(--glass-bg);border:var(--glass-border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column}
+.mychat-head{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.03)}
+.mychat-avatar{width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,var(--green),var(--orange-dark));display:flex;align-items:center;justify-content:center;color:#07130a;flex-shrink:0}
+.mychat-name{font-weight:800;font-size:14px;display:flex;align-items:center;gap:7px}
+.online-dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px rgba(127,250,136,.18);display:inline-block}
+.mychat-sub{font-size:11px;color:var(--gray-500);margin-top:1px}
+.mychat-thread{height:clamp(300px,52vh,560px);overflow-y:auto;padding:18px;display:flex;flex-direction:column;gap:8px;background:rgba(0,0,0,.25)}
+.mychat-inputrow{display:flex;align-items:center;gap:8px;padding:12px 14px;border-top:1px solid rgba(255,255,255,.07)}
+.mychat-inputrow input{flex:1;min-width:0;background:rgba(255,255,255,.05);border:1.5px solid rgba(255,255,255,.12);border-radius:999px;color:var(--white);padding:11px 16px;outline:none;font-size:13px}
+.mychat-inputrow input:focus{border-color:rgba(127,250,136,.45)}
+.mychat-inputrow .btn-primary{flex-shrink:0;border-radius:999px;padding:11px 24px}
+/* ---- Member notifications page ---- */
+.mn-list{display:grid;gap:10px}
+.mn-item{display:flex;align-items:flex-start;gap:12px;background:var(--glass-bg);border:var(--glass-border);border-radius:14px;padding:14px 16px;transition:.2s}
+.mn-item:hover{transform:translateY(-1px);border-color:rgba(127,250,136,.3)}
+.mn-icon{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.mn-icon.reply{background:rgba(127,250,136,.14);color:var(--green)}
+.mn-icon.warn{background:rgba(251,191,36,.12);color:var(--gold)}
+.mn-icon.ok{background:rgba(74,222,128,.12);color:var(--orange-dark)}
+.mn-icon.ann{background:rgba(255,255,255,.07);color:var(--gray-300)}
+.mn-body{min-width:0;flex:1}
+.mn-title{font-size:13px;font-weight:800;color:var(--white)}
+.mn-text{font-size:12px;color:var(--gray-300);margin-top:2px;word-break:break-word}
+.mn-when{font-size:10px;color:var(--gray-500);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-top:5px}
+.mn-cta{flex-shrink:0;align-self:center}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .form-row.cols-3{grid-template-columns:1fr 1fr 1fr}
 .form-full{grid-column:1/-1}
