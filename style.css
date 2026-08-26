@@ -278,7 +278,7 @@ tbody td{padding:11px 14px;color:var(--gray-300);font-size:13px;vertical-align:m
 .mychat-inputrow{display:flex;align-items:center;gap:8px;padding:12px 14px;border-top:1px solid rgba(255,255,255,.07)}
 .mychat-inputrow input{flex:1;min-width:0;background:rgba(255,255,255,.05);border:1.5px solid rgba(255,255,255,.12);border-radius:999px;color:var(--white);padding:11px 16px;outline:none;font-size:13px}
 .mychat-inputrow input:focus{border-color:rgba(127,250,136,.45)}
-.mychat-inputrow .btn-primary{flex-shrink:0;border-radius:999px;padding:11px 24px}
+.mychat-inputrow .btn-primary{flex-shrink:0;width:auto;border-radius:999px;padding:11px 26px;white-space:nowrap}
 /* ---- Member notifications page ---- */
 .mn-list{display:grid;gap:10px}
 .mn-item{display:flex;align-items:flex-start;gap:12px;background:var(--glass-bg);border:var(--glass-border);border-radius:14px;padding:14px 16px;transition:.2s}
