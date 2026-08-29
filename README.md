@@ -1,3 +1,2 @@
-# portfolio
-
-Merjohn Pagente — Web Developer portfolio. HTML + CSS only, no JavaScript.
+#FITCORE GYM MANAGEMENT SYSTEM 
+#SOFTWARE ENGINEER PROJECT
